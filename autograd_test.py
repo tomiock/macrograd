@@ -1,7 +1,7 @@
 import autograd.numpy as np
 from autograd import grad
 import unittest
-from tensor import Var
+from tomi_grad import Var
 
 
 # Define the function using autograd's NumPy
