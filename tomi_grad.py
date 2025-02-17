@@ -6,7 +6,7 @@ import numpy.typing as npt
 class Var:
     def __init__(self, array: npt.ArrayLike, requires_grad=True, precision=np.float64):
         self.requires_grad = requires_grad
-        self._grad: np.ndarray | None = None
+        self._grad: npt.ArrayLike | None = None
         self.pointers: list[tuple[Var, Callable]] = []
 
         # TODO: type check this
@@ -16,9 +16,6 @@ class Var:
 
         self.dim = self.arr.ndim
         self.shape = self.arr.shape
-
-    def backprop(self):
-        self._backward()
 
     @property
     def grad(self):
@@ -37,6 +34,7 @@ class Var:
             self._grad = np.zeros_like(self.arr)
         _value = np.array(_value, dtype=self.precision)
 
+        self._grad += _value
         for _var, _local_grad in self.pointers:
             if _var.requires_grad:
                 if callable(_local_grad):
@@ -44,19 +42,28 @@ class Var:
                 else:
                     _var._backward(_value * _local_grad)
 
-        self._grad += _value
+    def backprop(self):
+        self._backward()
 
     def sum(self):
         result_value = np.sum(self.arr)
         result = Var(result_value, requires_grad=self.requires_grad)
 
         if self.requires_grad:
+
             def _grad_sum(_value):
                 return _value * np.ones_like(self.arr)
 
             result.pointers.append((self, _grad_sum))
 
         return result
+
+    def sqrt(self):
+        return vSqrt(self)
+
+    @property
+    def T(self):
+        return vTranspose(self)
 
     def _forward(self):
         raise NotImplementedError
@@ -120,6 +127,33 @@ def _to_var(x):
         return x_var
 
 
+def vSqrt(A: Var):
+    A = _to_var(A)
+    result = Var(np.sqrt(A.arr))
+    result.requires_grad = A.requires_grad
+
+    if A.requires_grad:
+
+        def _grad_sqrt(_value):
+            return _value * (0.5 / np.sqrt(A.arr))
+
+        result.pointers.append((A, _grad_sqrt))
+    return result
+
+
+def vTranspose(A: Var):
+    A = _to_var(A)
+    result = Var(A.arr.T, requires_grad=A.requires_grad)
+    if A.requires_grad:
+
+        def _grad_t(_value):
+            return _value.T
+
+        result.pointers.append((A, _grad_t))
+    return result
+
+
+# PASSED
 def vMatMul(A: Var, B: Var):
     A = _to_var(A)
     B = _to_var(B)
@@ -130,15 +164,15 @@ def vMatMul(A: Var, B: Var):
 
     if A.requires_grad:
 
-        def _grad_a(input_grad):
-            return np.matmul(input_grad, B.arr.T)  # G @ B.T
+        def _grad_a(_value):
+            return np.matmul(_value, B.arr.T)  # G @ B.T
 
         result.pointers.append((A, _grad_a))
 
     if B.requires_grad:
 
-        def _grad_b(input_grad):
-            return np.matmul(A.arr.T, input_grad)  # A.T @ G
+        def _grad_b(_value):
+            return np.matmul(A.arr.T, _value)  # A.T @ G
 
         result.pointers.append((B, _grad_b))
 
@@ -149,21 +183,33 @@ def vAdd(A: Var | float | int, B: Var | float | int):
     A = _to_var(A)
     B = _to_var(B)
 
-    result = Var(A.arr + B.arr)
+    result = Var(A.arr + B.arr, requires_grad=(A.requires_grad or B.requires_grad))
 
     if A.requires_grad:
-        result.requires_grad = True
 
         def _grad_a(_value):
-            return _value
+            sum_axes = []
+            for i in range(len(_value.shape)):
+                if i < len(A.shape):
+                    if A.shape[i] == 1 and _value.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+
+            return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.pointers.append((A, _grad_a))
-
     if B.requires_grad:
-        result.requires_grad = True
 
         def _grad_b(_value):
-            return _value
+            sum_axes = []
+            for i in range(len(_value.shape)):
+                if i < len(B.shape):
+                    if B.shape[i] == 1 and _value.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+            return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.pointers.append((B, _grad_b))
 
@@ -194,7 +240,6 @@ def vMul(A: Var, B: Var):
     return result
 
 
-"""
 def vPow(A: Var, exponent: Var):
     A = _to_var(A)
     exponent = _to_var(exponent)
@@ -209,4 +254,3 @@ def vPow(A: Var, exponent: Var):
         result.pointers.append((A, dev))
 
     return result
-"""
