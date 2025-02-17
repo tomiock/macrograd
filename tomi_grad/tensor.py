@@ -4,7 +4,7 @@ import numpy.typing as npt
 
 
 class Var:
-    def __init__(self, array: npt.ArrayLike, requires_grad=True, precision=np.float64):
+    def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=np.float64):
         self.requires_grad = requires_grad
         self._grad: npt.ArrayLike | None = None
         self.pointers: list[tuple[Var, Callable]] = []
@@ -31,16 +31,13 @@ class Var:
             return
 
         if self._grad is None:
-            self._grad = np.zeros_like(self.arr)
+            self._grad = np.zeros_like(_value)
         _value = np.array(_value, dtype=self.precision)
 
         self._grad += _value
         for _var, _local_grad in self.pointers:
             if _var.requires_grad:
-                if callable(_local_grad):
-                    _var._backward(_local_grad(_value))
-                else:
-                    _var._backward(_value * _local_grad)
+                _var._backward(_local_grad(_value))
 
     def backprop(self):
         self._backward()
@@ -87,11 +84,11 @@ class Var:
 
     def __sub__(self, other):
         other = _to_var(other)
-        return vSub(self, other)
+        return vAdd(self, -1.0 * other)
 
     def __rsub__(self, other):
         other = _to_var(other)
-        return vSub(other, self)
+        return vAdd(other, -1.0 * self)
 
     def __mul__(self, other):
         other = _to_var(other)
@@ -101,14 +98,22 @@ class Var:
         other = _to_var(other)
         return vMul(other, self)
 
+    def __truediv__(self, b):
+        return vMul(self, pow(b, -1.0))
+
+    def __rtruediv__(self, b):
+        return vMul(b, pow(self, -1))
+
     def __pow__(self, other):
         other = _to_var(other)
-        # return vPow(self, other)
-        raise NotImplementedError
+        return vPow(self, other)
 
     def __matmul__(self, other):
         other = _to_var(other)
         return vMatMul(self, other)
+
+    def __neg__(self):
+        return -1 * self
 
     def __str__(self):
         return str(self.arr)
@@ -216,41 +221,86 @@ def vAdd(A: Var | float | int, B: Var | float | int):
     return result
 
 
-def vSub(A: Var | float | int, B: Var | float | int):
-    A = _to_var(A)
-    B = _to_var(B)
-
-    result = Var(A.arr - B.arr)
-
-    result.pointers.append((A, np.array(-1)))
-    result.pointers.append((B, np.array(-1)))
-
-    return result
-
-
 def vMul(A: Var, B: Var):
     A = _to_var(A)
     B = _to_var(B)
 
-    result = Var(A.arr * B.arr)
+    result = Var(A.arr * B.arr, requires_grad=(A.requires_grad or B.requires_grad))
 
-    result.pointers.append((A, B.arr))
-    result.pointers.append((B, A.arr))
+    if A.requires_grad:
+
+        def _grad_a(incoming_grad):
+            sum_axes = []
+            for i in range(len(incoming_grad.shape)):
+                if i < len(A.shape):
+                    if A.shape[i] == 1 and incoming_grad.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+            return np.sum(incoming_grad * B.arr, axis=tuple(sum_axes), keepdims=True)
+
+        result.pointers.append((A, _grad_a))
+
+    if B.requires_grad:
+
+        def _grad_b(incoming_grad):
+            sum_axes = []
+            for i in range(len(incoming_grad.shape)):
+                if i < len(B.shape):
+                    if B.shape[i] == 1 and incoming_grad.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+            return np.sum(incoming_grad * A.arr, axis=tuple(sum_axes), keepdims=True)
+
+        result.pointers.append((B, _grad_b))
 
     return result
 
 
 def vPow(A: Var, exponent: Var):
     A = _to_var(A)
-    exponent = _to_var(exponent)
+    _exponent = _to_var(exponent)
 
     _array = np.array(A.arr)
     _exponent = np.array(exponent.arr)
-    result = Var(np.power(_array, _exponent))
+    result = Var(
+        np.power(_array, _exponent),
+        requires_grad=(A.requires_grad or exponent.requires_grad),
+    )
 
     if A.requires_grad:
-        result._grad = 0.0
-        dev = exponent * np.power(A.arr, _exponent - 1)
-        result.pointers.append((A, dev))
+
+        def _grad_a(_value):
+            local_grad = exponent.arr * np.power(A.arr, exponent.arr - 1)
+
+            # Handle broadcasting.
+            sum_axes = []
+            for i in range(len(_value.shape)):
+                if i < len(A.shape):
+                    if A.shape[i] == 1 and _value.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+            return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
+        result.pointers.append((A, _grad_a))
+
+    if exponent.requires_grad:
+
+        def _grad_exponent(_value):
+            local_grad = np.power(A.arr, _exponent) * np.log(A.arr)
+
+            sum_axes = []
+            for i in range(len(_value.shape)):
+                if i < len(_exponent.shape):
+                    if exponent.shape[i] == 1 and _value.shape[i] > 1:
+                        sum_axes.append(i)
+                else:
+                    sum_axes.append(i)
+            return np.sum(
+                _value * local_grad, axis=tuple(sum_axes), keepdims=True
+            )
+
+        result.pointers.append((exponent, _grad_exponent))
 
     return result

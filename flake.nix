@@ -59,6 +59,7 @@ EOF
                         pythonPackages.numpy
                         pythonPackages.pandas
                         pythonPackages.torch
+                        pythonPackages.pytest
                         pythonPackages.autograd
                         pythonPackages.venvShellHook
                         pythonPackages.ipykernel
