@@ -3,11 +3,13 @@ import numpy as np
 import numpy.typing as npt
 
 
-class Var:
+class Tensor:
     def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=np.float64):
         self.requires_grad = requires_grad
         self._grad: npt.ArrayLike | None = None
-        self.pointers: list[tuple[Var, Callable]] = []
+        # the parents in the computation graph
+        # note that the graphs ENDS at the loss or another scalar value
+        self.parents: list[tuple[Tensor, Callable]] = []
 
         # TODO: type check this
         self.precision = precision
@@ -23,35 +25,59 @@ class Var:
 
     def zeroGrad(self):
         self._grad = np.zeros_like(self.arr)
-        for var, _ in self.pointers:
-            var.zeroGrad()
 
-    def _backward(self, _value: np.ndarray | float = 1.0):
+    def _backward(self, _value: np.ndarray = np.array(1.0)):
         if not self.requires_grad:
             return
 
-        if self._grad is None:
-            self._grad = np.zeros_like(_value)
-        _value = np.array(_value, dtype=self.precision)
+        visited = set()
+        stack = []
+        visit_stack = [self]
 
-        self._grad += _value
-        for _var, _local_grad in self.pointers:
-            if _var.requires_grad:
-                _var._backward(_local_grad(_value))
+        while visit_stack:
+            node = visit_stack[-1]
+            all_parents_visited = True
+            for p_node, _ in node.parents:
+                if p_node not in visited:
+                    all_parents_visited = False
+                    visit_stack.append(p_node)
+                    break
+
+            if all_parents_visited:
+                visit_stack.pop()
+                if node not in visited:
+                    visited.add(node)
+                    stack.append(node)
+
+        _value = np.array(_value, dtype=self.precision)
+        self._grad = _value
+
+        for node in reversed(stack):
+            if node.grad is None:
+                continue
+            for prev_node, local_grad in node.parents:
+                if prev_node.requires_grad:
+                    if prev_node._grad is None:
+                        prev_node._grad = np.zeros(prev_node.shape)
+
+                    grad_delta = local_grad(node._grad)
+                    if grad_delta.shape != prev_node._grad.shape: # Reshape grad_delta if shape mismatch
+                        grad_delta = grad_delta.reshape(prev_node._grad.shape)
+                    prev_node._grad += grad_delta
 
     def backprop(self):
         self._backward()
 
     def sum(self):
         result_value = np.sum(self.arr)
-        result = Var(result_value, requires_grad=self.requires_grad)
+        result = Tensor(result_value, requires_grad=self.requires_grad)
 
         if self.requires_grad:
 
             def _grad_sum(_value):
                 return _value * np.ones_like(self.arr)
 
-            result.pointers.append((self, _grad_sum))
+            result.parents.append((self, _grad_sum))
 
         return result
 
@@ -123,18 +149,18 @@ class Var:
 
 
 def _to_var(x):
-    if isinstance(x, Var):
+    if isinstance(x, Tensor):
         x.arr = np.array(x.arr)
         return x
     else:
-        x_var = Var(x)
+        x_var = Tensor(x)
         x_var.arr = np.array(x_var.arr)
         return x_var
 
 
-def vSqrt(A: Var):
+def vSqrt(A: Tensor):
     A = _to_var(A)
-    result = Var(np.sqrt(A.arr))
+    result = Tensor(np.sqrt(A.arr))
     result.requires_grad = A.requires_grad
 
     if A.requires_grad:
@@ -142,53 +168,52 @@ def vSqrt(A: Var):
         def _grad_sqrt(_value):
             return _value * (0.5 / np.sqrt(A.arr))
 
-        result.pointers.append((A, _grad_sqrt))
+        result.parents.append((A, _grad_sqrt))
     return result
 
 
-def vTranspose(A: Var):
+def vTranspose(A: Tensor):
     A = _to_var(A)
-    result = Var(A.arr.T, requires_grad=A.requires_grad)
+    result = Tensor(A.arr.T, requires_grad=A.requires_grad)
     if A.requires_grad:
 
         def _grad_t(_value):
             return _value.T
 
-        result.pointers.append((A, _grad_t))
+        result.parents.append((A, _grad_t))
     return result
 
 
-# PASSED
-def vMatMul(A: Var, B: Var):
+def vMatMul(A: Tensor, B: Tensor):
     A = _to_var(A)
     B = _to_var(B)
 
     result = np.matmul(A.arr, B.arr)
     required_grad = A.requires_grad or B.requires_grad
-    result = Var(result, requires_grad=required_grad)
+    result = Tensor(result, requires_grad=required_grad)
 
     if A.requires_grad:
 
         def _grad_a(_value):
             return np.matmul(_value, B.arr.T)  # G @ B.T
 
-        result.pointers.append((A, _grad_a))
+        result.parents.append((A, _grad_a))
 
     if B.requires_grad:
 
         def _grad_b(_value):
             return np.matmul(A.arr.T, _value)  # A.T @ G
 
-        result.pointers.append((B, _grad_b))
+        result.parents.append((B, _grad_b))
 
     return result
 
 
-def vAdd(A: Var | float | int, B: Var | float | int):
+def vAdd(A: Tensor | float | int, B: Tensor | float | int):
     A = _to_var(A)
     B = _to_var(B)
 
-    result = Var(A.arr + B.arr, requires_grad=(A.requires_grad or B.requires_grad))
+    result = Tensor(A.arr + B.arr, requires_grad=(A.requires_grad or B.requires_grad))
 
     if A.requires_grad:
 
@@ -198,12 +223,12 @@ def vAdd(A: Var | float | int, B: Var | float | int):
                 if i < len(A.shape):
                     if A.shape[i] == 1 and _value.shape[i] > 1:
                         sum_axes.append(i)
-                else:
+                elif i >= len(A.shape):
                     sum_axes.append(i)
 
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
-        result.pointers.append((A, _grad_a))
+        result.parents.append((A, _grad_a))
     if B.requires_grad:
 
         def _grad_b(_value):
@@ -212,20 +237,20 @@ def vAdd(A: Var | float | int, B: Var | float | int):
                 if i < len(B.shape):
                     if B.shape[i] == 1 and _value.shape[i] > 1:
                         sum_axes.append(i)
-                else:
+                elif i >= len(B.shape):
                     sum_axes.append(i)
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
-        result.pointers.append((B, _grad_b))
+        result.parents.append((B, _grad_b))
 
     return result
 
 
-def vMul(A: Var, B: Var):
+def vMul(A: Tensor, B: Tensor):
     A = _to_var(A)
     B = _to_var(B)
 
-    result = Var(A.arr * B.arr, requires_grad=(A.requires_grad or B.requires_grad))
+    result = Tensor(A.arr * B.arr, requires_grad=(A.requires_grad or B.requires_grad))
 
     if A.requires_grad:
 
@@ -235,11 +260,11 @@ def vMul(A: Var, B: Var):
                 if i < len(A.shape):
                     if A.shape[i] == 1 and incoming_grad.shape[i] > 1:
                         sum_axes.append(i)
-                else:
+                elif i >= len(A.shape):
                     sum_axes.append(i)
             return np.sum(incoming_grad * B.arr, axis=tuple(sum_axes), keepdims=True)
 
-        result.pointers.append((A, _grad_a))
+        result.parents.append((A, _grad_a))
 
     if B.requires_grad:
 
@@ -253,18 +278,18 @@ def vMul(A: Var, B: Var):
                     sum_axes.append(i)
             return np.sum(incoming_grad * A.arr, axis=tuple(sum_axes), keepdims=True)
 
-        result.pointers.append((B, _grad_b))
+        result.parents.append((B, _grad_b))
 
     return result
 
 
-def vPow(A: Var, exponent: Var):
+def vPow(A: Tensor, exponent: Tensor):
     A = _to_var(A)
     _exponent = _to_var(exponent)
 
     _array = np.array(A.arr)
     _exponent = np.array(exponent.arr)
-    result = Var(
+    result = Tensor(
         np.power(_array, _exponent),
         requires_grad=(A.requires_grad or exponent.requires_grad),
     )
@@ -274,16 +299,16 @@ def vPow(A: Var, exponent: Var):
         def _grad_a(_value):
             local_grad = exponent.arr * np.power(A.arr, exponent.arr - 1)
 
-            # Handle broadcasting.
             sum_axes = []
             for i in range(len(_value.shape)):
                 if i < len(A.shape):
                     if A.shape[i] == 1 and _value.shape[i] > 1:
                         sum_axes.append(i)
-                else:
+                elif i >= len(A.shape):
                     sum_axes.append(i)
             return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
-        result.pointers.append((A, _grad_a))
+
+        result.parents.append((A, _grad_a))
 
     if exponent.requires_grad:
 
@@ -295,12 +320,10 @@ def vPow(A: Var, exponent: Var):
                 if i < len(_exponent.shape):
                     if exponent.shape[i] == 1 and _value.shape[i] > 1:
                         sum_axes.append(i)
-                else:
+                elif i >= len(_exponent.shape):
                     sum_axes.append(i)
-            return np.sum(
-                _value * local_grad, axis=tuple(sum_axes), keepdims=True
-            )
+            return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
-        result.pointers.append((exponent, _grad_exponent))
+        result.parents.append((exponent, _grad_exponent))
 
     return result

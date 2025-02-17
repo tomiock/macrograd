@@ -61,9 +61,11 @@ EOF
                         pythonPackages.torch
                         pythonPackages.pytest
                         pythonPackages.autograd
+                        pythonPackages.graphviz
                         pythonPackages.venvShellHook
                         pythonPackages.ipykernel
                         pkgs.uv # pip alternative
+                        pkgs.graphviz
                         installScript
                     ];
 

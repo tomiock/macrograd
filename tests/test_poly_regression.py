@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import time
 import unittest
-from tomi_grad.tensor import Var  # Replace tomi_grad with your package name
+from tomi_grad.tensor import Tensor
 
 class TestPolynomialRegression(unittest.TestCase):
 
@@ -29,7 +29,7 @@ class TestPolynomialRegression(unittest.TestCase):
 
     def test_convergence_vectorized(self):
 
-        w = Var(np.random.normal(size=(3, 1)), requires_grad=True)  # 3x1 vector
+        w = Tensor(np.random.normal(size=(3, 1)), requires_grad=True)  # 3x1 vector
         training_loss = []
 
         t = time.time()
@@ -39,8 +39,8 @@ class TestPolynomialRegression(unittest.TestCase):
             batch_loss = 0
 
             # Vectorized loss calculation
-            X = Var(np.stack([np.ones(self.m), self.XX, self.XX**2], axis=1), requires_grad=False) # m x 3
-            Y = Var(self.YY.reshape(-1,1), requires_grad=False)  # Convert Y to a column vector (m x 1)
+            X = Tensor(np.stack([np.ones(self.m), self.XX, self.XX**2], axis=1), requires_grad=False) # m x 3
+            Y = Tensor(self.YY.reshape(-1,1), requires_grad=False)  # Convert Y to a column vector (m x 1)
 
             out = X @ w  # (m x 3) @ (3 x 1) -> (m x 1)
             loss = ((out - Y) ** 2).sum()
@@ -71,9 +71,9 @@ class TestPolynomialRegression(unittest.TestCase):
     def test_convergence_non_vectorized(self):
         """Tests the non-vectorized implementation."""
 
-        w0 = Var(0.0, requires_grad=True)
-        w1 = Var(0.0, requires_grad=True)
-        w2 = Var(0.0, requires_grad=True)
+        w0 = Tensor(0.0, requires_grad=True)
+        w1 = Tensor(0.0, requires_grad=True)
+        w2 = Tensor(0.0, requires_grad=True)
 
         training_loss = []
         t = time.time()
@@ -85,8 +85,8 @@ class TestPolynomialRegression(unittest.TestCase):
 
             batch_loss = 0
             for x, y in zip(self.XX, self.YY):
-                out = w0 + w1 * Var(x, requires_grad=False) + w2 * Var(x, requires_grad=False)**2
-                loss = (out - Var(y, requires_grad=False))**2
+                out = w0 + w1 * Tensor(x, requires_grad=False) + w2 * Tensor(x, requires_grad=False)**2
+                loss = (out - Tensor(y, requires_grad=False))**2
                 loss.backprop()
                 batch_loss += loss.arr
 

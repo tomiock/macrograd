@@ -4,7 +4,7 @@ import unittest
 import autograd.numpy as np
 from autograd import grad
 
-from tomi_grad.tensor import Var
+from tomi_grad.tensor import Tensor
 
 
 # Define the function using autograd's NumPy
@@ -25,8 +25,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         gradient_y_autograd = grad_z_y(a, b)
 
         # Calculate using custom framework
-        a_var = Var(a, requires_grad=True)
-        b_var = Var(b, requires_grad=True)
+        a_var = Tensor(a, requires_grad=True)
+        b_var = Tensor(b, requires_grad=True)
         z_var = (a_var @ b_var).sum()
         z_var.requires_grad = True
         z_var.backprop()
@@ -47,8 +47,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         gradient_y_autograd = grad_z_y(a, b)
 
         # Calculate using custom framework
-        a_var = Var(a, requires_grad=True)
-        b_var = Var(b, requires_grad=False)
+        a_var = Tensor(a, requires_grad=True)
+        b_var = Tensor(b, requires_grad=False)
         z_var = (a_var @ b_var).sum()
         z_var.requires_grad = True
         z_var.backprop()
@@ -63,8 +63,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_x_autograd = grad(lambda x, y: (x + y).sum(), 0)(a, b)
         grad_y_autograd = grad(lambda x, y: (x + y).sum(), 1)(a, b)
 
-        a_var = Var(a.tolist(), requires_grad=True)
-        b_var = Var(b.tolist(), requires_grad=True)
+        a_var = Tensor(a.tolist(), requires_grad=True)
+        b_var = Tensor(b.tolist(), requires_grad=True)
         z_var = (a_var + b_var).sum()
         z_var.requires_grad = True
         z_var.backprop()
@@ -78,8 +78,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_x_autograd = grad(lambda x, y: (x - y).sum(), 0)(a, b)
         grad_y_autograd = grad(lambda x, y: (x - y).sum(), 1)(a, b)
 
-        a_var = Var(a.tolist(), requires_grad=True)
-        b_var = Var(b.tolist(), requires_grad=True)
+        a_var = Tensor(a.tolist(), requires_grad=True)
+        b_var = Tensor(b.tolist(), requires_grad=True)
         z_var = (a_var - b_var).sum()
         z_var.backprop()
         self.assertTrue(allclose(a_var.grad, grad_x_autograd))
@@ -92,8 +92,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_x_autograd = grad(lambda x, y: (x * y).sum(), 0)(a, b)
         grad_y_autograd = grad(lambda x, y: (x * y).sum(), 1)(a, b)
 
-        a_var = Var(a.tolist(), requires_grad=True)
-        b_var = Var(b.tolist(), requires_grad=True)
+        a_var = Tensor(a.tolist(), requires_grad=True)
+        b_var = Tensor(b.tolist(), requires_grad=True)
         z_var = (a_var * b_var).sum()
         z_var.backprop()
         self.assertTrue(np.allclose(a_var.grad, grad_x_autograd))
@@ -103,8 +103,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         x_np = np.array([[1.0, 2.0], [3.0, 4.0]])
         y_np = np.array([2.0])
 
-        x_var = Var(x_np.tolist(), requires_grad=True)
-        y_var = Var(y_np.tolist(), requires_grad=True)
+        x_var = Tensor(x_np.tolist(), requires_grad=True)
+        y_var = Tensor(y_np.tolist(), requires_grad=True)
         z_var = (x_var**y_var).sum()
         z_var.requires_grad = True
         z_var.backprop()
@@ -121,8 +121,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         x_np = np.array([[1.0, 2.0], [3.0, 4.0]])
         y_np = np.array([[1.0, 1.0], [2.0, 2.0]])
 
-        x_var = Var(x_np.tolist(), requires_grad=True)
-        y_var = Var(y_np.tolist(), requires_grad=True)
+        x_var = Tensor(x_np.tolist(), requires_grad=True)
+        y_var = Tensor(y_np.tolist(), requires_grad=True)
         z_var = (x_var**y_var).sum()
         z_var.requires_grad = True
         z_var.backprop()
@@ -137,7 +137,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
     def test_transpose(self):
         x_np = np.array([[1.0, 2.0], [3.0, 4.0]])
-        x_var = Var(x_np.tolist(), requires_grad=True)
+        x_var = Tensor(x_np.tolist(), requires_grad=True)
 
         z_var = x_var.T.sum()
         z_var.backprop()
@@ -147,7 +147,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
     def test_sqrt(self):
         x_np = np.array([1.0, 4.0, 9.0, 16.0])
-        x_var = Var(x_np.tolist(), requires_grad=True)
+        x_var = Tensor(x_np.tolist(), requires_grad=True)
         z_var = (x_var).sqrt().sum()
         z_var.backprop()
 
@@ -156,7 +156,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
     def test_sqrt_broadcasting(self):
         x_np = np.array([[1.0, 4.0, 9.0], [16.0, 25.0, 36.0]])
-        x_var = Var(x_np.tolist(), requires_grad=True)
+        x_var = Tensor(x_np.tolist(), requires_grad=True)
         z_var = x_var.sqrt().sum()
         z_var.backprop()
         grad_x_autograd = grad(lambda x: np.sqrt(x).sum())(x_np)
