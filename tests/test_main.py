@@ -35,6 +35,27 @@ class TestAutogradEquivalence(unittest.TestCase):
         self.assertTrue(allclose(a_var.grad, gradient_x_autograd))
         self.assertTrue(allclose(b_var.grad, gradient_y_autograd))
 
+    def test_matmul_sum_param(self):
+        # Create the input arrays (using autograd's NumPy)
+        a = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float64)
+        b = np.array([[7, 8], [9, 10], [11, 12]], dtype=np.float64)
+
+        # Calculate the gradient of z with respect to x and y using autograd
+        grad_z_x = grad(my_function, 0)
+        grad_z_y = grad(my_function, 1)
+        gradient_x_autograd = grad_z_x(a, b)
+        gradient_y_autograd = grad_z_y(a, b)
+
+        # Calculate using custom framework
+        a_var = Var(a, requires_grad=True)
+        b_var = Var(b, requires_grad=False)
+        z_var = (a_var @ b_var).sum()
+        z_var.requires_grad = True
+        z_var.backprop()
+
+        # Assert that the gradients are close
+        self.assertTrue(allclose(a_var.grad, gradient_x_autograd))
+
     def test_addition(self):
         a = np.array([[1.0, 2.0], [3.0, 4.0]])
         b = np.array([[5.0, 6.0], [7.0, 8.0]])
@@ -61,8 +82,6 @@ class TestAutogradEquivalence(unittest.TestCase):
         b_var = Var(b.tolist(), requires_grad=True)
         z_var = (a_var - b_var).sum()
         z_var.backprop()
-        print(f"{a_var.grad = }")
-        print(f"{b_var.grad = }")
         self.assertTrue(allclose(a_var.grad, grad_x_autograd))
         self.assertTrue(allclose(b_var.grad, grad_y_autograd))
 
