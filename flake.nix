@@ -55,6 +55,7 @@ EOF
                 {
                 devShells.default = pkgs.mkShell {
                     packages = with pkgs; [
+
                         pythonPackages.matplotlib
                         pythonPackages.numpy
                         pythonPackages.pandas
@@ -62,6 +63,8 @@ EOF
                         pythonPackages.pytest
                         pythonPackages.autograd
                         pythonPackages.graphviz
+                        pythonPackages.scikit-learn
+
                         pythonPackages.venvShellHook
                         pythonPackages.ipykernel
                         pkgs.uv # pip alternative

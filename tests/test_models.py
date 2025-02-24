@@ -2,7 +2,9 @@ import pytest
 import numpy as np
 import time
 import unittest
-from tomi_grad.tensor import Tensor
+
+from macrograd.tensor import Tensor
+
 
 class TestPolynomialRegression(unittest.TestCase):
 

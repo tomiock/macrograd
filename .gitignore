@@ -2,5 +2,3 @@
 __pycache__/
 env/
 result
-poly.py
-autograd_comp.py

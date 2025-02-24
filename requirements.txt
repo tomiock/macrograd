@@ -1,2 +1,3 @@
 autograd
+scikit-learn
 numpy

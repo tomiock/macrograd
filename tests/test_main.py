@@ -4,7 +4,7 @@ import unittest
 import autograd.numpy as np
 from autograd import grad
 
-from tomi_grad.tensor import Tensor
+from macrograd import Tensor
 
 
 # Define the function using autograd's NumPy
