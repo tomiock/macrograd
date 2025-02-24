@@ -3,19 +3,29 @@ import numpy as np
 import numpy.typing as npt
 
 
+def _to_var(x):
+    if isinstance(x, Tensor):
+        x.arr = np.array(x.arr)
+        return x
+    else:
+        x_var = Tensor(x)
+        x_var.arr = np.array(x_var.arr)
+        return x_var
+
+
+type TensorLike = Tensor | int | float | np.ndarray
+
+
 class Tensor:
     def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=np.float64):
         self.requires_grad = requires_grad
         self._grad: npt.ArrayLike | None = None
-        # the parents in the computation graph
-        # note that the graphs ENDS at the loss or another scalar value
-        self.parents: list[tuple[Tensor, Callable]] = []
-
-        # TODO: type check this
+        self.parents: list[
+            tuple["Tensor", Callable]
+        ] = []  # Use string for forward reference
+        self.children: list["Tensor"] = []  # Use string for forward reference
         self.precision = precision
-
         self.arr = np.array(array, dtype=precision)
-
         self.dim = self.arr.ndim
         self.shape = self.arr.shape
 
@@ -25,6 +35,12 @@ class Tensor:
 
     def zeroGrad(self):
         self._grad = np.zeros_like(self.arr)
+
+    def backprop(self):
+        self._backward()
+
+    def __repr__(self) -> str:
+        return f"{self.arr}, grad={self.requires_grad}, shape={self.shape}"
 
     def _backward(self, _value: np.ndarray = np.array(1.0)):
         if not self.requires_grad:
@@ -52,6 +68,9 @@ class Tensor:
         _value = np.array(_value, dtype=self.precision)
         self._grad = _value
 
+        del visited
+        del visit_stack
+
         for node in reversed(stack):
             if node.grad is None:
                 continue
@@ -59,14 +78,53 @@ class Tensor:
                 if prev_node.requires_grad:
                     if prev_node._grad is None:
                         prev_node._grad = np.zeros(prev_node.shape)
-
                     grad_delta = local_grad(node._grad)
-                    if grad_delta.shape != prev_node._grad.shape: # Reshape grad_delta if shape mismatch
+                    if grad_delta.shape != prev_node._grad.shape:
                         grad_delta = grad_delta.reshape(prev_node._grad.shape)
                     prev_node._grad += grad_delta
 
-    def backprop(self):
-        self._backward()
+    def __add__(self, other):
+        return vAdd(self, other)
+
+    def __radd__(self, other):
+        return vAdd(other, self)
+
+    def __sub__(self, other):
+        return vAdd(self, -other)
+
+    def __rsub__(self, other):
+        return vAdd(other, -self)
+
+    def __mul__(self, other):
+        return vMul(self, other)
+
+    def __rmul__(self, other):
+        return vMul(other, self)
+
+    def __truediv__(self, other):
+        return vMul(self, vPow(other, -1.0))
+
+    def __rtruediv__(self, other):
+        return vMul(other, vPow(self, -1.0))
+
+    def __matmul__(self, other):
+        return vMatMul(self, other)
+
+    def __rmatmul__(self, other):
+        return vMatMul(other, self)
+
+    def __neg__(self):
+        return vMul(self, -1.0)
+
+    def __pow__(self, exponent):
+        return vPow(self, exponent)
+
+    @property
+    def T(self):
+        return vTranspose(self)
+
+    def sqrt(self):
+        return vSqrt(self)
 
     def sum(self):
         result_value = np.sum(self.arr)
@@ -81,94 +139,28 @@ class Tensor:
 
         return result
 
-    def sqrt(self):
-        return vSqrt(self)
 
-    @property
-    def T(self):
-        return vTranspose(self)
-
-    def _forward(self):
-        raise NotImplementedError
-
-    def get_operation(self):
-        raise NotImplementedError
-
-    def get_consumers(self):
-        raise NotImplementedError
-
-    def get_inputs(self):
-        raise NotImplementedError
-
-    def __add__(self, other):
-        other = _to_var(other)
-        return vAdd(self, other)
-
-    def __radd__(self, other):
-        other = _to_var(other)
-        return vAdd(other, self)
-
-    def __sub__(self, other):
-        other = _to_var(other)
-        return vAdd(self, -1.0 * other)
-
-    def __rsub__(self, other):
-        other = _to_var(other)
-        return vAdd(other, -1.0 * self)
-
-    def __mul__(self, other):
-        other = _to_var(other)
-        return vMul(self, other)
-
-    def __rmul__(self, other):
-        other = _to_var(other)
-        return vMul(other, self)
-
-    def __truediv__(self, b):
-        return vMul(self, pow(b, -1.0))
-
-    def __rtruediv__(self, b):
-        return vMul(b, pow(self, -1))
-
-    def __pow__(self, other):
-        other = _to_var(other)
-        return vPow(self, other)
-
-    def __matmul__(self, other):
-        other = _to_var(other)
-        return vMatMul(self, other)
-
-    def __neg__(self):
-        return -1 * self
-
-    def __str__(self):
-        return str(self.arr)
-
-    def __repr__(self):
-        return str(self.arr)
-
-
-def _to_var(x):
-    if isinstance(x, Tensor):
-        x.arr = np.array(x.arr)
-        return x
-    else:
-        x_var = Tensor(x)
-        x_var.arr = np.array(x_var.arr)
-        return x_var
+def get_axes_broadcasting(incoming_grad, tensor: Tensor):
+    sum_axes = []
+    for i in range(len(incoming_grad.shape)):
+        if i < len(tensor.shape):
+            if tensor.shape[i] == 1 and incoming_grad.shape[i] > 1:
+                sum_axes.append(i)
+        elif i >= len(tensor.shape):
+            sum_axes.append(i)
+    return sum_axes
 
 
 def vSqrt(A: Tensor):
     A = _to_var(A)
-    result = Tensor(np.sqrt(A.arr))
-    result.requires_grad = A.requires_grad
-
+    result = Tensor(np.sqrt(A.arr), requires_grad=A.requires_grad)
     if A.requires_grad:
 
         def _grad_sqrt(_value):
             return _value * (0.5 / np.sqrt(A.arr))
 
         result.parents.append((A, _grad_sqrt))
+        A.children.append(result)  # Add to children
     return result
 
 
@@ -181,149 +173,104 @@ def vTranspose(A: Tensor):
             return _value.T
 
         result.parents.append((A, _grad_t))
+        A.children.append(result)  # Add to children
     return result
 
 
 def vMatMul(A: Tensor, B: Tensor):
     A = _to_var(A)
     B = _to_var(B)
-
-    result = np.matmul(A.arr, B.arr)
-    required_grad = A.requires_grad or B.requires_grad
-    result = Tensor(result, requires_grad=required_grad)
-
+    result = Tensor(
+        np.matmul(A.arr, B.arr), requires_grad=(A.requires_grad or B.requires_grad)
+    )
     if A.requires_grad:
 
         def _grad_a(_value):
-            return np.matmul(_value, B.arr.T)  # G @ B.T
+            return np.matmul(_value, B.arr.T)
 
         result.parents.append((A, _grad_a))
-
+        A.children.append(result)  # Add to children
     if B.requires_grad:
 
         def _grad_b(_value):
-            return np.matmul(A.arr.T, _value)  # A.T @ G
+            return np.matmul(A.arr.T, _value)
 
         result.parents.append((B, _grad_b))
-
+        B.children.append(result)  # Add to children
     return result
 
 
 def vAdd(A: Tensor | float | int, B: Tensor | float | int):
     A = _to_var(A)
     B = _to_var(B)
-
     result = Tensor(A.arr + B.arr, requires_grad=(A.requires_grad or B.requires_grad))
-
     if A.requires_grad:
 
         def _grad_a(_value):
-            sum_axes = []
-            for i in range(len(_value.shape)):
-                if i < len(A.shape):
-                    if A.shape[i] == 1 and _value.shape[i] > 1:
-                        sum_axes.append(i)
-                elif i >= len(A.shape):
-                    sum_axes.append(i)
-
+            sum_axes = get_axes_broadcasting(_value, A)
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
+        A.children.append(result)  # Add to children
     if B.requires_grad:
 
         def _grad_b(_value):
-            sum_axes = []
-            for i in range(len(_value.shape)):
-                if i < len(B.shape):
-                    if B.shape[i] == 1 and _value.shape[i] > 1:
-                        sum_axes.append(i)
-                elif i >= len(B.shape):
-                    sum_axes.append(i)
+            sum_axes = get_axes_broadcasting(_value, B)
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((B, _grad_b))
-
+        B.children.append(result)  # Add to children
     return result
 
 
-def vMul(A: Tensor, B: Tensor):
+def vMul(A: TensorLike, B: TensorLike):
     A = _to_var(A)
     B = _to_var(B)
-
     result = Tensor(A.arr * B.arr, requires_grad=(A.requires_grad or B.requires_grad))
-
     if A.requires_grad:
 
-        def _grad_a(incoming_grad):
-            sum_axes = []
-            for i in range(len(incoming_grad.shape)):
-                if i < len(A.shape):
-                    if A.shape[i] == 1 and incoming_grad.shape[i] > 1:
-                        sum_axes.append(i)
-                elif i >= len(A.shape):
-                    sum_axes.append(i)
-            return np.sum(incoming_grad * B.arr, axis=tuple(sum_axes), keepdims=True)
+        def _grad_a(_value):
+            sum_axes = get_axes_broadcasting(_value, A)
+            return np.sum(_value * B.arr, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
+        A.children.append(result)  # Add to children
 
     if B.requires_grad:
 
         def _grad_b(incoming_grad):
-            sum_axes = []
-            for i in range(len(incoming_grad.shape)):
-                if i < len(B.shape):
-                    if B.shape[i] == 1 and incoming_grad.shape[i] > 1:
-                        sum_axes.append(i)
-                else:
-                    sum_axes.append(i)
+            sum_axes = get_axes_broadcasting(incoming_grad, B)
             return np.sum(incoming_grad * A.arr, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((B, _grad_b))
-
+        B.children.append(result)  # Add to children
     return result
 
 
-def vPow(A: Tensor, exponent: Tensor):
+def vPow(A: TensorLike, exponent: TensorLike) -> Tensor:
     A = _to_var(A)
-    _exponent = _to_var(exponent)
-
-    _array = np.array(A.arr)
-    _exponent = np.array(exponent.arr)
+    exponent = _to_var(exponent)  # Corrected: Use _to_var
     result = Tensor(
-        np.power(_array, _exponent),
+        np.power(A.arr, exponent.arr),
         requires_grad=(A.requires_grad or exponent.requires_grad),
     )
-
     if A.requires_grad:
 
         def _grad_a(_value):
             local_grad = exponent.arr * np.power(A.arr, exponent.arr - 1)
-
-            sum_axes = []
-            for i in range(len(_value.shape)):
-                if i < len(A.shape):
-                    if A.shape[i] == 1 and _value.shape[i] > 1:
-                        sum_axes.append(i)
-                elif i >= len(A.shape):
-                    sum_axes.append(i)
+            sum_axes = get_axes_broadcasting(_value, A)
             return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
+        A.children.append(result)  # Add to children
 
     if exponent.requires_grad:
 
         def _grad_exponent(_value):
-            local_grad = np.power(A.arr, _exponent) * np.log(A.arr)
-
-            sum_axes = []
-            for i in range(len(_value.shape)):
-                if i < len(_exponent.shape):
-                    if exponent.shape[i] == 1 and _value.shape[i] > 1:
-                        sum_axes.append(i)
-                elif i >= len(_exponent.shape):
-                    sum_axes.append(i)
+            local_grad = np.power(A.arr, exponent.arr) * np.log(A.arr)
+            sum_axes = get_axes_broadcasting(_value, exponent)
             return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((exponent, _grad_exponent))
-
+        exponent.children.append(result)  # Add to children
     return result
