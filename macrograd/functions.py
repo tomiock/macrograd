@@ -1,26 +1,22 @@
 import numpy as np
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .tensor import Tensor
-
-
+from .tensor import Tensor
 from .tensor import get_axes_broadcasting
+
 
 def sigmoid(A: Tensor | np.ndarray):
     result: Tensor
     if isinstance(A, Tensor):
-        result = Tensor(1. / (1. + np.exp(-A.arr, dtype=np.float128)))
+        result = Tensor(1.0 / (1.0 + np.exp(-A.arr, dtype=np.float128)))
         result.requires_grad = A.requires_grad
     else:
-        result = Tensor(1. / (1. + np.exp(-A, dtype=np.float128)))
+        result = Tensor(1.0 / (1.0 + np.exp(-A, dtype=np.float128)))
         result.requires_grad = False
 
     if result.requires_grad:
 
         def _grad_a(_value):
-            return 1. / (1. + np.exp(-_value))
+            return 1.0 / (1.0 + np.exp(-_value))
 
         result.parents.append((A, _grad_a))
     return result
@@ -115,9 +111,6 @@ def MSE(x_1: Tensor, x_2: Tensor):
 
 
 def BCE(x: Tensor, y: Tensor) -> Tensor:
-    """
-    Binary Cross-Entropy Loss with clipping for numerical stability.
-    """
     if x.shape != y.shape:
         raise ValueError("x and y must have the same shape")
 
@@ -127,27 +120,33 @@ def BCE(x: Tensor, y: Tensor) -> Tensor:
     x_clipped = np.clip(x.arr, epsilon, 1.0 - epsilon)
 
     loss_val = -(y.arr * np.log(x_clipped) + (1 - y.arr) * np.log(1 - x_clipped))
-    result = Tensor(np.sum(loss_val) / n, requires_grad=(x.requires_grad or y.requires_grad))
+    result = Tensor(
+        np.sum(loss_val) / n, requires_grad=(x.requires_grad or y.requires_grad)
+    )
 
     if x.requires_grad:
+
         def _grad_x(incoming_grad):
             local_grad = (x_clipped - y.arr) / (x_clipped * (1.0 - x_clipped))
             sum_axes = get_axes_broadcasting(incoming_grad, x)
-            return np.sum(incoming_grad * local_grad, axis=tuple(sum_axes), keepdims=True)
+            return np.sum(
+                incoming_grad * local_grad, axis=tuple(sum_axes), keepdims=True
+            )
 
         result.parents.append((x, _grad_x))
-        #x.children.append(result)
+        # x.children.append(result)
 
     return result
+
 
 def relu(A: Tensor):
     result = Tensor(np.maximum(0, A.arr), requires_grad=A.requires_grad)
 
     if A.requires_grad:
+
         def _grad_relu(incoming_grad):
-            return incoming_grad * (A.arr > 0).astype(incoming_grad.dtype)
+            return incoming_grad * (A.arr > 0)
 
         result.parents.append((A, _grad_relu))
-        A.children.append(result)
 
     return result

@@ -1,3 +1,4 @@
 autograd
 scikit-learn
 numpy
+tqdm

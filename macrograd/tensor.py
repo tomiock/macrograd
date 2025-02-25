@@ -23,7 +23,6 @@ class Tensor:
         self.parents: list[
             tuple["Tensor", Callable]
         ] = []  # Use string for forward reference
-        self.children: list["Tensor"] = []  # Use string for forward reference
         self.precision = precision
         self.arr = np.array(array, dtype=precision)
         self.dim = self.arr.ndim
@@ -38,17 +37,21 @@ class Tensor:
 
     def backprop(self):
         self._backward()
+        self.parents = []
 
     def __repr__(self) -> str:
         return f"{self.arr}, grad={self.requires_grad}, shape={self.shape}"
+
+    def reshape(self, *args):
+        return Tensor(self.arr.reshape(args), requires_grad=self.requires_grad)
 
     def _backward(self, _value: np.ndarray = np.array(1.0)):
         if not self.requires_grad:
             return
 
         visited = set()
-        stack = []
         visit_stack = [self]
+        stack = []
 
         while visit_stack:
             node = visit_stack[-1]
@@ -82,6 +85,7 @@ class Tensor:
                     if grad_delta.shape != prev_node._grad.shape:
                         grad_delta = grad_delta.reshape(prev_node._grad.shape)
                     prev_node._grad += grad_delta
+            node.parents = []
 
     def __add__(self, other):
         return vAdd(self, other)
@@ -160,7 +164,6 @@ def vSqrt(A: Tensor):
             return _value * (0.5 / np.sqrt(A.arr))
 
         result.parents.append((A, _grad_sqrt))
-        A.children.append(result)  # Add to children
     return result
 
 
@@ -173,7 +176,6 @@ def vTranspose(A: Tensor):
             return _value.T
 
         result.parents.append((A, _grad_t))
-        A.children.append(result)  # Add to children
     return result
 
 
@@ -189,14 +191,12 @@ def vMatMul(A: Tensor, B: Tensor):
             return np.matmul(_value, B.arr.T)
 
         result.parents.append((A, _grad_a))
-        A.children.append(result)  # Add to children
     if B.requires_grad:
 
         def _grad_b(_value):
             return np.matmul(A.arr.T, _value)
 
         result.parents.append((B, _grad_b))
-        B.children.append(result)  # Add to children
     return result
 
 
@@ -211,7 +211,6 @@ def vAdd(A: Tensor | float | int, B: Tensor | float | int):
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
-        A.children.append(result)  # Add to children
     if B.requires_grad:
 
         def _grad_b(_value):
@@ -219,7 +218,6 @@ def vAdd(A: Tensor | float | int, B: Tensor | float | int):
             return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((B, _grad_b))
-        B.children.append(result)  # Add to children
     return result
 
 
@@ -234,7 +232,6 @@ def vMul(A: TensorLike, B: TensorLike):
             return np.sum(_value * B.arr, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
-        A.children.append(result)  # Add to children
 
     if B.requires_grad:
 
@@ -243,7 +240,6 @@ def vMul(A: TensorLike, B: TensorLike):
             return np.sum(incoming_grad * A.arr, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((B, _grad_b))
-        B.children.append(result)  # Add to children
     return result
 
 
@@ -262,7 +258,6 @@ def vPow(A: TensorLike, exponent: TensorLike) -> Tensor:
             return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((A, _grad_a))
-        A.children.append(result)  # Add to children
 
     if exponent.requires_grad:
 
@@ -272,5 +267,4 @@ def vPow(A: TensorLike, exponent: TensorLike) -> Tensor:
             return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
         result.parents.append((exponent, _grad_exponent))
-        exponent.children.append(result)  # Add to children
     return result

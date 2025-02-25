@@ -58,7 +58,7 @@ EOF
 
                         pythonPackages.matplotlib
                         pythonPackages.numpy
-                        pythonPackages.pandas
+                        pythonPackages.tqdm
                         pythonPackages.torch
                         pythonPackages.pytest
                         pythonPackages.autograd
