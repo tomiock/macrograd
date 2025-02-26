@@ -70,7 +70,7 @@ class TestMacrogradModel(unittest.TestCase):
 
         for epoch in tqdm(range(self.num_epochs)):
             for param in self.parameters:
-                param.zeroGrad()
+                param.zero_grad()
 
             y_pred = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
 
@@ -155,7 +155,7 @@ class TestPolynomialRegression(unittest.TestCase):
         t = time.time()
 
         for _ in range(self.epochs):
-            w.zeroGrad()
+            w.zero_grad()
             batch_loss = 0
 
             # Vectorized loss calculation
@@ -206,9 +206,9 @@ class TestPolynomialRegression(unittest.TestCase):
         t = time.time()
 
         for epoch in range(self.epochs):
-            w0.zeroGrad()
-            w1.zeroGrad()
-            w2.zeroGrad()
+            w0.zero_grad()
+            w1.zero_grad()
+            w2.zero_grad()
 
             batch_loss = 0
             for x, y in zip(self.XX, self.YY):

@@ -32,7 +32,7 @@ class Tensor:
     def grad(self):
         return self._grad
 
-    def zeroGrad(self):
+    def zero_grad(self):
         self._grad = np.zeros_like(self.arr)
 
     def backprop(self):

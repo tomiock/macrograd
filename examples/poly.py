@@ -25,7 +25,7 @@ batch_loss = 0
 t = time.time()
 
 for _ in range(epochs):
-    w.zeroGrad()
+    w.zero_grad()
 
     batch_loss = 0
     X = Tensor(np.stack([np.ones(m), XX, XX**2], axis=1), requires_grad=False)
