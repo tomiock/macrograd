@@ -11,7 +11,7 @@ from macrograd.tensor import _to_var
 from sklearn.datasets import make_moons
 from tqdm import tqdm
 
-from macrograd.functions import log2
+from macrograd.functions import log2, relu, sigmoid
 
 
 def BCE(y_pred: Tensor, y_true: Tensor) -> Tensor:
@@ -26,13 +26,11 @@ def BCE(y_pred: Tensor, y_true: Tensor) -> Tensor:
 
 
 def model(input, w_1, b_1, w_2, b_2):
-    wx_b = (input @ w_1) + b_1
-    z_1 = 1 / (1 + e ** (-wx_b))
-    # z_1 = sigmoid(wx_b)
+    linear_1 = (input @ w_1) + b_1
+    z_1 = relu(linear_1)
 
-    wx_b_2 = (z_1 @ w_2) + b_2
-    z_2 = 1 / (1 + e ** (-wx_b_2))
-    # z_2 = sigmoid(wx_b_2)
+    linear_2 = (z_1 @ w_2) + b_2
+    z_2 = sigmoid(linear_2)
 
     return z_2
 
