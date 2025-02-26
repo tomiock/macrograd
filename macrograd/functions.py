@@ -1,25 +1,7 @@
 import numpy as np
 
-from .tensor import Tensor
+from .tensor import Tensor, _to_var
 from .tensor import get_axes_broadcasting
-
-
-def sigmoid(A: Tensor | np.ndarray):
-    result: Tensor
-    if isinstance(A, Tensor):
-        result = Tensor(1.0 / (1.0 + np.exp(-A.arr, dtype=np.float128)))
-        result.requires_grad = A.requires_grad
-    else:
-        result = Tensor(1.0 / (1.0 + np.exp(-A, dtype=np.float128)))
-        result.requires_grad = False
-
-    if result.requires_grad:
-
-        def _grad_a(_value):
-            return 1.0 / (1.0 + np.exp(-_value))
-
-        result.parents.append((A, _grad_a))
-    return result
 
 
 def sin(A: Tensor):
@@ -139,13 +121,32 @@ def BCE(x: Tensor, y: Tensor) -> Tensor:
     return result
 
 
+def sigmoid(A: Tensor):
+    A = _to_var(A)
+    result = Tensor(1.0 / (1.0 + np.exp(-A.arr)))
+    result.requires_grad = A.requires_grad
+
+    if result.requires_grad:
+
+        def _grad_a(_value):
+            sig = 1.0 / (1.0 + np.exp(-A.arr))
+            local_grad = sig * (1 - sig)
+            return _value * local_grad
+
+        result.parents.append((A, _grad_a))
+    return result
+
+
 def relu(A: Tensor):
-    result = Tensor(np.maximum(0, A.arr), requires_grad=A.requires_grad)
+    A = _to_var(A)
+    result = Tensor(np.maximum(0, A.arr))
+    result.requires_grad = A.requires_grad
 
-    if A.requires_grad:
+    if result.requires_grad:
 
-        def _grad_relu(incoming_grad):
-            return incoming_grad * (A.arr > 0)
+        def _grad_relu(_value):
+            local_grad = np.array((A.arr > 0)).astype(A.arr.dtype)
+            return _value * local_grad
 
         result.parents.append((A, _grad_relu))
 

@@ -10,11 +10,10 @@
         flake-utils.lib.eachDefaultSystem (system:
             let
                 pkgs = nixpkgs.legacyPackages.${system};
-                python = pkgs.python312;
+                python = pkgs.python313;
                 pythonPackages = python.pkgs;
                 lib-path = with pkgs; pkgs.lib.makeLibraryPath [
                     libffi
-                    openssl
                     stdenv.cc.cc
                 ];
 
@@ -68,7 +67,6 @@ EOF
                         pythonPackages.venvShellHook
                         pythonPackages.ipykernel
                         pkgs.uv # pip alternative
-                        pkgs.graphviz
                         installScript
                     ];
 

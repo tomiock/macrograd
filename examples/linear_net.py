@@ -3,9 +3,8 @@ import numpy as np
 from macrograd import Tensor, e
 from macrograd.tensor import _to_var
 from sklearn.datasets import make_moons
-from tqdm import tqdm
 
-from macrograd.functions import log2, sigmoid
+from macrograd.functions import log2, sigmoid, relu
 
 import warnings
 
@@ -31,43 +30,33 @@ y_one_hot = Tensor(np.eye(2)[(y.flatten() + 1).astype(int) // 2])
 
 
 input_size = 2
-hidden_size = 100
+hidden_size = 16
 output_size = 1
 
-w_1 = Tensor(
-    np.random.randn(input_size, hidden_size), requires_grad=True
-)  # Correct shape
-b_1 = Tensor(
-    np.zeros((1, hidden_size)), requires_grad=True
-)  # Correct shape, initialize to zero
-w_2 = Tensor(
-    np.random.randn(hidden_size, output_size), requires_grad=True
-)  # Correct shape
-b_2 = Tensor(
-    np.zeros((1, output_size)), requires_grad=True
-)  # Correct shape, initialize to zero
+w_1 = Tensor(np.random.randn(input_size, hidden_size), requires_grad=True)
+b_1 = Tensor(np.zeros((1, hidden_size)), requires_grad=True)
+w_2 = Tensor(np.random.randn(hidden_size, output_size), requires_grad=True)
+b_2 = Tensor(np.zeros((1, output_size)), requires_grad=True)
 
 parameters = [w_1, b_1, w_2, b_2]
 
 # --- Training Loop ---
 lr = 0.1
-num_epochs = 10000
+num_epochs = 1000
 
 
 def model(input):
-    wx_b = (input @ w_1) + b_1
-    z_1 = 1 / (1 + e ** (-wx_b))
-    #z_1 = sigmoid(wx_b)
+    linear_1 = (input @ w_1) + b_1
+    z_1 = relu(linear_1)
 
-    wx_b_2 = (z_1 @ w_2) + b_2
-    z_2 = 1 / (1 + e ** (-wx_b_2))
-    #z_2 = sigmoid(wx_b_2)
+    linear_2 = (z_1 @ w_2) + b_2
+    z_2 = sigmoid(linear_2)
 
     return z_2
 
 
 losses = []
-for epoch in tqdm(range(num_epochs)):
+for epoch in range(num_epochs):
     for param in parameters:
         param.zeroGrad()
 
@@ -81,6 +70,8 @@ for epoch in tqdm(range(num_epochs)):
 
     b_1 = b_1 - b_1.grad * lr
     b_2 = b_2 - b_2.grad * lr
+
+    losses.append(loss.arr.item())
 
 # Create a grid of points to evaluate the model
 h = 0.05  # Step size in the mesh
@@ -114,6 +105,7 @@ plt.plot(losses)
 plt.title("Training Loss")
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
+plt.yscale("log")
 plt.show()
 
 # --- Predictions ---
