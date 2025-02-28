@@ -1,52 +1,14 @@
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 
-from macrograd.model import Model, Linear, Optimizer
-from macrograd.functions import relu, sigmoid, _to_var, log2
+from macrograd.model import Model, Linear, SGD_MomentumOptimizer
+from macrograd.functions import relu, log2
 from macrograd import Tensor, e
 
-np.random.seed(49)
-
-def load_mnist_train(file_path) -> tuple[list, list]:
-    try:
-        data = pd.read_csv(file_path)
-    except FileNotFoundError:
-        print(f"Error: File not found at {file_path}")
-        raise FileNotFoundError
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        raise Exception(e)
-
-    labels = data.iloc[:, 0].values  # First column is labels
-    images = data.iloc[:, 1:].values  # Remaining columns are pixel values
-
-    return images, labels
-
-
-def show_image(image: np.ndarray):
-    return plt.imshow(image.reshape(28, 28))
-
-
-def label2vec(label: int, num_classes: int = 10):
-    vec = np.zeros((num_classes,))
-    vec[label] = 1.0
-    return vec
-
-
-all_images, all_labels = load_mnist_train("../datasets/train.csv")
-
-num_samples = len(all_images)
-train_size = int(num_samples * 0.8)
-test_size = num_samples - train_size
-print(train_size)
-
-train_images = np.array(all_images[:train_size])
-train_labels = np.array(list(map(label2vec, all_labels[:train_size])))
-
-test_images = np.array(all_images[train_size:])
-test_labels = np.array(all_labels[train_size:])
+import torchvision
+import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset
 
 
 def cross_entropy(y_true, y_pred):
@@ -56,6 +18,85 @@ def cross_entropy(y_true, y_pred):
 def softmax(x: Tensor):
     e_x = e**x
     return e_x / (e_x.sum(axis=1, keepdims=True))
+
+
+class MNIST_dataset(Dataset):
+    def __init__(self, data, partition="train"):
+        self.data = data
+        self.partition = partition
+        print("total len", len(self.data))
+        self.images = np.empty((len(self.data), 28 * 28), dtype=np.float32)
+        self.labels = np.empty((len(self.data), 10), dtype=np.float32)
+        self._preprocess_data()
+
+    def __len__(self):
+        return len(self.data)
+
+    def from_pil_to_tensor(self, image):
+        return torchvision.transforms.ToTensor()(image)
+
+    def __getitem__(self, idx):
+        # Return preprocessed data.
+        return {"img": self.images[idx], "label": self.labels[idx]}
+
+    def _preprocess_data(self):
+        """Preprocesses the entire dataset and stores it in memory."""
+        for idx in tqdm(
+            range(len(self.data)), desc=f"Preprocessing {self.partition} data"
+        ):
+            image = self.data[idx][0]
+            image_tensor = self.from_pil_to_tensor(image)
+            image_tensor = image_tensor.view(-1).numpy()
+
+            label = torch.tensor(self.data[idx][1])
+            label = F.one_hot(label, num_classes=10).float().numpy()
+
+            self.images[idx] = image_tensor
+            self.labels[idx] = label
+
+
+def create_minibatches(dataset, batch_size):
+    num_samples = len(dataset)
+    indices = np.arange(num_samples)
+    np.random.shuffle(indices)  # Shuffle the data
+    minibatches = []
+
+    for i in range(0, num_samples, batch_size):
+        batch_indices = indices[i : i + batch_size]
+        batch_images = dataset.images[batch_indices]
+        batch_labels = dataset.labels[batch_indices]
+
+        X_batch = Tensor(batch_images, requires_grad=False, precision=np.float16)
+        y_batch = Tensor(batch_labels, requires_grad=False, precision=np.float16)
+        minibatches.append((X_batch, y_batch))
+
+    return minibatches
+
+
+def evaluate_model(model, test_minibatches):
+    correct_count = 0
+    total_count = 0
+
+    for X_batch, y_batch in test_minibatches:
+        predictions = model(X_batch)
+        predicted_labels = np.argmax(predictions.arr, axis=1)
+        true_labels = np.argmax(y_batch.arr, axis=1)
+        correct_count += np.sum(predicted_labels == true_labels)
+        total_count += 10
+
+    accuracy = correct_count / total_count
+    return accuracy
+
+
+train_set = torchvision.datasets.MNIST(".data/", train=True, download=True)
+test_set = torchvision.datasets.MNIST(".data/", train=False, download=True)
+
+train_dataset = MNIST_dataset(train_set, partition="train")
+test_dataset = MNIST_dataset(test_set, partition="test")
+
+batch_size = 10
+train_minibatches = create_minibatches(train_dataset, batch_size)
+test_minibatches = create_minibatches(test_dataset, batch_size)
 
 
 class MNIST_model(Model):
@@ -75,7 +116,7 @@ class MNIST_model(Model):
         data = relu(data)
 
         data = self.hidden_2(data)
-        data = sigmoid(data)
+        data = relu(data)
 
         data = self.output_layer(data)
         data = softmax(data)
@@ -83,39 +124,33 @@ class MNIST_model(Model):
         return data
 
 
-X = Tensor(train_images, requires_grad=False)
-y = Tensor(train_labels, requires_grad=False)
-
+loss = Tensor(0, requires_grad=True)
 model = MNIST_model(784, 10)
-loss_ = []
 
 parameters = model.init_params()
 
-epochs = 200
-learning_rate = 0.1
-optimizer = Optimizer(learning_rate)
+epochs = 2
+learning_rate = 0.01
+optimizer = SGD_MomentumOptimizer(learning_rate, 0.99, parameters)
 
-for _ in tqdm(range(epochs)):
-    y_pred = model(X)
+loss_history = []
+batch_loss_history = []
 
-    loss = cross_entropy(y, y_pred)
-    print(loss)
+for epoch in range(epochs):
+    epoch_losses = []
+    for X_batch, y_batch in tqdm(train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"):
+        y_pred = model(X_batch)
 
-    parameters = optimizer.step(loss, parameters)
+        loss = cross_entropy(y_batch, y_pred)
 
-    loss_.append(loss.arr)
+        parameters = optimizer.step(loss, parameters)
 
-plt.plot(loss_)
-plt.show()
+        epoch_losses.append(loss.arr)
+        batch_loss_history.append(loss.arr)
 
-# --- Accuracy Calculation ---
-X_test = Tensor(test_images, requires_grad=False)
-print(X_test.shape)
-predictions = model(X_test)  # Get predictions on the test set
-predicted_labels = np.argmax(
-    predictions.arr, axis=1
-)  # Convert probabilities to class labels
+    epoch_loss_mean = np.mean(epoch_losses)
+    loss_history.append(epoch_loss_mean)
+    tqdm.write(f"Epoch {epoch + 1} - loss: {epoch_loss_mean}")
 
-
-accuracy = np.mean(predicted_labels == test_labels)
-print(f"Test Accuracy: {accuracy * 100:.2f}%")
+test_accuracy = evaluate_model(model, test_minibatches)
+print(f"Test Accuracy: {test_accuracy * 100:.2f}%")

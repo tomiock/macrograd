@@ -17,7 +17,7 @@ type TensorLike = Tensor | int | float | np.ndarray
 
 
 class Tensor:
-    def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=np.float64):
+    def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=None):
         self.requires_grad = requires_grad
         self._grad: npt.ArrayLike | None = None
         self.parents: list[
@@ -192,7 +192,7 @@ def vMatMul(A: Tensor, B: Tensor):
     A = _to_var(A)
     B = _to_var(B)
     result = Tensor(
-        np.matmul(A.arr, B.arr), requires_grad=(A.requires_grad or B.requires_grad)
+        np.dot(A.arr, B.arr), requires_grad=(A.requires_grad or B.requires_grad)
     )
     if A.requires_grad:
 

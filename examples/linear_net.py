@@ -6,7 +6,7 @@ from macrograd.tensor import _to_var
 from sklearn.datasets import make_moons
 
 from macrograd.functions import log2, sigmoid, relu
-from macrograd.model import Optimizer, Model, Linear
+from macrograd.model import SGD_MomentumOptimizer, SGD_Optimizer, Model, Linear
 
 import warnings
 
@@ -55,7 +55,7 @@ parameters = model.parameters
 num_epochs = 2000
 losses = []
 
-optimizer = Optimizer(learning_rate=0.1)
+optimizer = SGD_MomentumOptimizer(learning_rate=.01, alpha=.9, params_copy=parameters)
 
 for epoch in range(num_epochs):
     # forward pass

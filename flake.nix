@@ -59,6 +59,7 @@ EOF
                         pythonPackages.numpy
                         pythonPackages.tqdm
                         pythonPackages.torch
+                        pythonPackages.torchvision
                         pythonPackages.pytest
                         pythonPackages.autograd
                         pythonPackages.graphviz

@@ -14,11 +14,16 @@ class Linear:
         self.b = None
 
     def __call__(self, data):
-        return (data @ self.w) + self.b
+        data = data @ self.w
+        return data + self.b
 
     def init_params(self):
-        self.w = Tensor(np.random.randn(*self._w_shape), requires_grad=True)
-        self.b = Tensor(np.random.randn(*self._b_shape), requires_grad=True)
+        std_dev = np.sqrt(2.0 / self.in_dims)
+        self.w = Tensor(np.random.randn(*self._w_shape) * std_dev, requires_grad=True)
+
+        self.b = Tensor(
+            np.zeros(self._b_shape), requires_grad=True
+        )
 
         return [self.w, self.b]
 
@@ -53,7 +58,7 @@ class Model:
         return self._params
 
 
-class Optimizer:
+class SGD_Optimizer:
     def __init__(
         self, learning_rate: float = 0.01, minimizing=True, step_function=None
     ):
@@ -82,3 +87,43 @@ class Optimizer:
         loss.backprop()
 
         return list(map(self.step_fn, params))
+
+
+class SGD_MomentumOptimizer:
+    def __init__(
+        self, learning_rate: float = 0.01, alpha: float = 0.9, params_copy: list = []
+    ):
+        self.lr = learning_rate
+        self.velocities = []
+
+        if 0 <= alpha < 1:
+            self.alpha = Tensor(alpha, requires_grad=False)
+        else:
+            raise ValueError("Alpha hyperparemter must be between 0 and 1")
+
+        for param in params_copy:
+            self.velocities.append(
+                Tensor(
+                    np.zeros_like(param.arr), requires_grad=False, precision=np.float16
+                )
+            )
+
+        del params_copy
+
+    def step_fn(self, param: Tensor, index: int):
+        self.velocities[index].arr = (
+            self.alpha.arr * self.velocities[index].arr - self.lr * param.grad
+        )
+        param.arr = param.arr + self.velocities[index].arr
+        return param
+
+    def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
+        for param in params:
+            param.zero_grad()
+
+        loss.backprop()
+
+        updated_params = []
+        for index, param in enumerate(params):
+            updated_params.append(self.step_fn(param, index))
+        return updated_params
