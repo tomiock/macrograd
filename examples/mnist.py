@@ -131,7 +131,7 @@ parameters = model.init_params()
 
 epochs = 2
 learning_rate = 0.01
-optimizer = SGD_MomentumOptimizer(learning_rate, 0.99, parameters)
+optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=parameters)
 
 loss_history = []
 batch_loss_history = []
