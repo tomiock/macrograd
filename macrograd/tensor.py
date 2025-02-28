@@ -40,7 +40,7 @@ class Tensor:
         self.parents = []
 
     def __repr__(self) -> str:
-        return f"{self.arr}, grad={self.requires_grad}, shape={self.shape}"
+        return f"{self.arr}, grad={self.grad}, shape={self.shape}"
 
     def reshape(self, *args):
         return Tensor(self.arr.reshape(args), requires_grad=self.requires_grad)
@@ -73,7 +73,7 @@ class Tensor:
 
         del visited
         del visit_stack
-
+        
         for node in reversed(stack):
             if node.grad is None:
                 continue
@@ -130,14 +130,23 @@ class Tensor:
     def sqrt(self):
         return vSqrt(self)
 
-    def sum(self):
-        result_value = np.sum(self.arr)
+    def sum(self, axis=None, keepdims=False):
+        result_value = np.sum(self.arr, axis=axis, keepdims=keepdims)
         result = Tensor(result_value, requires_grad=self.requires_grad)
 
         if self.requires_grad:
 
             def _grad_sum(_value):
-                return _value * np.ones_like(self.arr)
+                if axis is None:
+                    return _value * np.ones_like(self.arr)
+
+                if not keepdims:
+                    # We need to "un-squeeze" the _value array to the same number
+                    # of dimensions as self.arr before broadcasting.
+                    _value_expanded = np.expand_dims(_value, axis=axis)
+                    return _value_expanded * np.ones_like(self.arr)
+                else:
+                    return _value * np.ones_like(self.arr)
 
             result.parents.append((self, _grad_sum))
 

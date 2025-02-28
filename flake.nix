@@ -62,6 +62,7 @@ EOF
                         pythonPackages.pytest
                         pythonPackages.autograd
                         pythonPackages.graphviz
+                        pythonPackages.pandas
                         pythonPackages.scikit-learn
 
                         pythonPackages.venvShellHook

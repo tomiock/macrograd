@@ -151,3 +151,24 @@ def relu(A: Tensor):
         result.parents.append((A, _grad_relu))
 
     return result
+
+
+def softmax(x: Tensor) -> Tensor:
+    x = _to_var(x)
+
+    # --- Forward Pass ---
+    x_shifted = x.arr - np.max(x.arr, axis=-1, keepdims=True)  # Subtract max for stability
+    exp_x = np.exp(x_shifted)
+    sum_exp_x = np.sum(exp_x, axis=-1, keepdims=True)
+    result_arr = exp_x / sum_exp_x
+    result = Tensor(result_arr, requires_grad=x.requires_grad)
+
+    if x.requires_grad:
+        def _grad_x(incoming_grad):
+            # Combine "subtract max" and gradient calculation
+            # This is the key optimization
+            return (incoming_grad - np.sum(incoming_grad * result.arr, axis=-1, keepdims=True)) * result.arr
+
+        result.parents.append((x, _grad_x))
+
+    return result
