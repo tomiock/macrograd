@@ -37,7 +37,7 @@ for _ in range(epochs):
     #visualize_graph(loss, filename='poly_reg')
 
     loss.backprop()  # Use backprop
-    batch_loss += loss.arr
+    batch_loss += loss.data
 
     training_loss.append(batch_loss)
 
@@ -53,12 +53,12 @@ print(f"Final loss: {batch_loss}")
 
 # Check if the estimated weights are close to the true weights.
 tolerance = 0.5  # Adjust as needed
-print(f"Estimated w: {w.arr.flatten()}, True w: {w_true}")
+print(f"Estimated w: {w.data.flatten()}, True w: {w_true}")
 
 plt.title('Our estimated fit')
 plt.plot(XX, YY, '.')
 x_vals = np.arange(-2, 2, 0.1)
-y_vals = w.arr[0,0] + w.arr[1,0] * x_vals + w.arr[2,0] * x_vals**2  # Use .arr to access NumPy arrays
+y_vals = w.data[0,0] + w.data[1,0] * x_vals + w.data[2,0] * x_vals**2  # Use .arr to access NumPy arrays
 plt.plot(x_vals, y_vals, 'r')
 plt.show()
 

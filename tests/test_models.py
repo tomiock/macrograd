@@ -22,7 +22,7 @@ def BCE(y_pred: Tensor, y_true: Tensor) -> Tensor:
 
     loss_val = y_true * log2(y_pred) + (1 - y_true) * log2(1 - y_pred)
 
-    return -1 * (loss_val.sum() / y_true.arr.size)
+    return -1 * (loss_val.sum() / y_true.data.size)
 
 
 def model(input, w_1, b_1, w_2, b_2):
@@ -75,10 +75,10 @@ class TestMacrogradModel(unittest.TestCase):
             y_pred = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
 
             loss = BCE(y_pred, self.y)
-            losses.append(loss.arr.item())
+            losses.append(loss.data.item())
 
             if epoch == 0:
-                initial_loss = loss.arr.item()
+                initial_loss = loss.data.item()
 
             loss.backprop()
 
@@ -86,7 +86,7 @@ class TestMacrogradModel(unittest.TestCase):
             self.w_2 = self.w_2 - self.w_2.grad * self.lr
             self.b_1 = self.b_1 - self.b_1.grad * self.lr
             self.b_2 = self.b_2 - self.b_2.grad * self.lr
-            final_loss = loss.arr.item()
+            final_loss = loss.data.item()
 
         self.assertIsNotNone(initial_loss)
         self.assertIsNotNone(final_loss)
@@ -94,29 +94,29 @@ class TestMacrogradModel(unittest.TestCase):
 
         # --- Predictions --- after training
         predictions = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
-        predictions = (predictions.arr > 0.5).astype(int)
+        predictions = (predictions.data > 0.5).astype(int)
         accuracy = np.mean(predictions == self.y.reshape(-1, 1))
         print(f"Accuracy: {accuracy * 100:.2f}%")
         self.assertGreaterEqual(accuracy, 0.75)  # Check for reasonable accuracy
 
         # Check for NaNs in weights and biases
-        self.assertFalse(np.isnan(self.w_1.arr).any())
-        self.assertFalse(np.isnan(self.b_1.arr).any())
-        self.assertFalse(np.isnan(self.w_2.arr).any())
-        self.assertFalse(np.isnan(self.b_2.arr).any())
+        self.assertFalse(np.isnan(self.w_1.data).any())
+        self.assertFalse(np.isnan(self.b_1.data).any())
+        self.assertFalse(np.isnan(self.w_2.data).any())
+        self.assertFalse(np.isnan(self.b_2.data).any())
 
     def test_bce_loss(self):
         y_pred = Tensor(np.array([0.8, 0.2, 0.9, 0.1]))
         y_true = Tensor(np.array([1, 0, 1, 0]))
         loss = BCE(y_pred, y_true)
         self.assertIsInstance(loss, Tensor)
-        self.assertFalse(np.isnan(loss.arr))
+        self.assertFalse(np.isnan(loss.data))
 
         # Test with edge cases (close to 0 and 1)
         y_pred_edge = Tensor(np.array([0.999, 0.001]))
         y_true_edge = Tensor(np.array([1, 0]))
         loss_edge = BCE(y_pred_edge, y_true_edge)
-        self.assertFalse(np.isnan(loss_edge.arr))
+        self.assertFalse(np.isnan(loss_edge.data))
 
     def test_model_output_shape(self):
         output = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
@@ -171,7 +171,7 @@ class TestPolynomialRegression(unittest.TestCase):
             loss = ((out - Y) ** 2).sum()
 
             loss.backprop()
-            batch_loss += loss.arr
+            batch_loss += loss.data
             training_loss.append(batch_loss)
 
             w = w - self.lr * w.grad / self.m  # Correct weight update
@@ -184,8 +184,8 @@ class TestPolynomialRegression(unittest.TestCase):
         print(f"Final loss: {batch_loss}")
         self.assertLess(batch_loss, self.initial_loss * 0.1)
 
-        print(f"Estimated w: {w.arr.flatten()}, True w: {self.w_true}")
-        self.assertTrue(np.allclose(w.arr.flatten(), self.w_true, atol=self.tolerance))
+        print(f"Estimated w: {w.data.flatten()}, True w: {self.w_true}")
+        self.assertTrue(np.allclose(w.data.flatten(), self.w_true, atol=self.tolerance))
         self.assertLess(training_loss[-1], training_loss[0])
         self.assertLess(
             training_loss[int(len(training_loss) * 0.9)],
@@ -219,7 +219,7 @@ class TestPolynomialRegression(unittest.TestCase):
                 )
                 loss = (out - Tensor(y, requires_grad=False)) ** 2
                 loss.backprop()
-                batch_loss += loss.arr
+                batch_loss += loss.data
 
             training_loss.append(batch_loss)
 
@@ -235,12 +235,12 @@ class TestPolynomialRegression(unittest.TestCase):
         print(f"Final loss: {batch_loss}")
         self.assertLess(batch_loss, self.initial_loss * 0.1)
 
-        print(f"Estimated w0: {w0.arr}, True w0: {self.w_true[0]}")
-        print(f"Estimated w1: {w1.arr}, True w1: {self.w_true[1]}")
-        print(f"Estimated w2: {w2.arr}, True w2: {self.w_true[2]}")
-        self.assertTrue(np.allclose(w0.arr, self.w_true[0], atol=self.tolerance))
-        self.assertTrue(np.allclose(w1.arr, self.w_true[1], atol=self.tolerance))
-        self.assertTrue(np.allclose(w2.arr, self.w_true[2], atol=self.tolerance))
+        print(f"Estimated w0: {w0.data}, True w0: {self.w_true[0]}")
+        print(f"Estimated w1: {w1.data}, True w1: {self.w_true[1]}")
+        print(f"Estimated w2: {w2.data}, True w2: {self.w_true[2]}")
+        self.assertTrue(np.allclose(w0.data, self.w_true[0], atol=self.tolerance))
+        self.assertTrue(np.allclose(w1.data, self.w_true[1], atol=self.tolerance))
+        self.assertTrue(np.allclose(w2.data, self.w_true[2], atol=self.tolerance))
 
         self.assertLess(training_loss[-1], training_loss[0])
         self.assertLess(

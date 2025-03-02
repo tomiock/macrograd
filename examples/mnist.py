@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 
 
 def cross_entropy(y_true, y_pred):
-    return -1 * (y_true * log2(y_pred)).sum() / y_true.arr.shape[0]
+    return -1 * (y_true * log2(y_pred)).sum() / y_true.data.shape[0]
 
 
 def softmax(x: Tensor):
@@ -66,8 +66,8 @@ def create_minibatches(dataset, batch_size):
         batch_images = dataset.images[batch_indices]
         batch_labels = dataset.labels[batch_indices]
 
-        X_batch = Tensor(batch_images, requires_grad=False, precision=np.float16)
-        y_batch = Tensor(batch_labels, requires_grad=False, precision=np.float16)
+        X_batch = Tensor(batch_images, requires_grad=False, precision=np.float32)
+        y_batch = Tensor(batch_labels, requires_grad=False, precision=np.float32)
         minibatches.append((X_batch, y_batch))
 
     return minibatches
@@ -79,8 +79,8 @@ def evaluate_model(model, test_minibatches):
 
     for X_batch, y_batch in test_minibatches:
         predictions = model(X_batch)
-        predicted_labels = np.argmax(predictions.arr, axis=1)
-        true_labels = np.argmax(y_batch.arr, axis=1)
+        predicted_labels = np.argmax(predictions.data, axis=1)
+        true_labels = np.argmax(y_batch.data, axis=1)
         correct_count += np.sum(predicted_labels == true_labels)
         total_count += 10
 
@@ -129,8 +129,8 @@ model = MNIST_model(784, 10)
 
 parameters = model.init_params()
 
-epochs = 2
-learning_rate = 0.01
+epochs = 1
+learning_rate = 0.001
 optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=parameters)
 
 loss_history = []
@@ -145,12 +145,11 @@ for epoch in range(epochs):
 
         parameters = optimizer.step(loss, parameters)
 
-        epoch_losses.append(loss.arr)
-        batch_loss_history.append(loss.arr)
+        epoch_losses.append(loss.data)
+        batch_loss_history.append(loss.data)
 
     epoch_loss_mean = np.mean(epoch_losses)
     loss_history.append(epoch_loss_mean)
-    tqdm.write(f"Epoch {epoch + 1} - loss: {epoch_loss_mean}")
 
 test_accuracy = evaluate_model(model, test_minibatches)
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")

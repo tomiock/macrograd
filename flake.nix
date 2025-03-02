@@ -57,6 +57,7 @@ EOF
 
                         pythonPackages.matplotlib
                         pythonPackages.numpy
+                        pythonPackages.numba
                         pythonPackages.tqdm
                         pythonPackages.torch
                         pythonPackages.torchvision

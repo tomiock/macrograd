@@ -2,53 +2,50 @@ from collections.abc import Callable
 import numpy as np
 import numpy.typing as npt
 
+type ArrayLike = int | float | np.ndarray | list | tuple
+type TensorLike = Tensor | int | float | np.ndarray | list
 
-def _to_var(x):
+
+def _to_var(x: TensorLike) -> "Tensor":
     if isinstance(x, Tensor):
-        x.arr = np.array(x.arr)
         return x
     else:
-        x_var = Tensor(x)
-        x_var.arr = np.array(x_var.arr)
-        return x_var
-
-
-type TensorLike = Tensor | int | float | np.ndarray
+        return Tensor(np.array(x))
 
 
 class Tensor:
-    def __init__(self, array: npt.ArrayLike, requires_grad=False, precision=None):
+    def __init__(self, array: ArrayLike, requires_grad=False, precision=np.float32):
         self.requires_grad = requires_grad
         self._grad: npt.ArrayLike | None = None
         self.parents: list[
-            tuple["Tensor", Callable]
+            tuple[Tensor, Callable]
         ] = []  # Use string for forward reference
-        self.precision = precision
-        self.arr = np.array(array, dtype=precision)
-        self.dim = self.arr.ndim
-        self.shape = self.arr.shape
+        self.data = np.array(array, dtype=precision)
+        self.dim = self.data.ndim
+        self.shape = self.data.shape
 
     @property
     def grad(self):
         return self._grad
 
     def zero_grad(self):
-        self._grad = np.zeros_like(self.arr)
+        self._grad = tensor_zeros_like(self.data)
 
     def backprop(self):
         self._backward()
         self.parents = []
 
     def __repr__(self) -> str:
-        return f"{self.arr}, grad={self.grad}, shape={self.shape}"
+        return f"{self.data}, grad={self.grad}, shape={self.shape}"
 
     def reshape(self, *args):
-        return Tensor(self.arr.reshape(args), requires_grad=self.requires_grad)
+        return Tensor(
+            tensor_reshape(self.data, args), requires_grad=self.requires_grad
+        )
 
     def _backward(self, _value: np.ndarray = np.array(1.0)):
         if not self.requires_grad:
             return
-
         visited = set()
         visit_stack = [self]
         stack = []
@@ -68,212 +65,268 @@ class Tensor:
                     visited.add(node)
                     stack.append(node)
 
-        _value = np.array(_value, dtype=self.precision)
         self._grad = _value
 
         del visited
         del visit_stack
-        
+
         for node in reversed(stack):
             if node.grad is None:
                 continue
-            for prev_node, local_grad in node.parents:
+            for prev_node, local_grad_fn in node.parents:
                 if prev_node.requires_grad:
                     if prev_node._grad is None:
-                        prev_node._grad = np.zeros(prev_node.shape)
-                    grad_delta = local_grad(node._grad)
+                        prev_node._grad = tensor_zeros(prev_node.shape)
+                    # Get the local gradient.  Critically, pass *arrays*, not Tensors.
+                    grad_delta = local_grad_fn(node._grad)
                     if grad_delta.shape != prev_node._grad.shape:
-                        grad_delta = grad_delta.reshape(prev_node._grad.shape)
+                        grad_delta = tensor_reshape(grad_delta, prev_node._grad.shape)
                     prev_node._grad += grad_delta
             node.parents = []
 
-    def __add__(self, other):
-        return vAdd(self, other)
+    def __add__(self, other: TensorLike) -> "Tensor":
+        other = _to_var(other)
+        result = Tensor(
+            tensor_add(self.data, other.data),
+            requires_grad=(self.requires_grad or other.requires_grad),
+        )
+        if self.requires_grad:
+            # Pass arrays to the external gradient function.
+            result.parents.append(
+                (self, lambda x: grad_add(x, self.data, other.data))
+            )  # Pass A and B
+        if other.requires_grad:
+            result.parents.append(
+                (other, lambda x: grad_add(x, other.data, self.data))
+            )  # Pass B and A (order matters for broadcasting)
+        return result
 
-    def __radd__(self, other):
-        return vAdd(other, self)
+    def __radd__(self, other: TensorLike) -> "Tensor":
+        return _to_var(other) + self
 
-    def __sub__(self, other):
-        return vAdd(self, -other)
+    def __sub__(self, other: TensorLike) -> "Tensor":
+        return self + (-_to_var(other))
 
-    def __rsub__(self, other):
-        return vAdd(other, -self)
+    def __rsub__(self, other: TensorLike) -> "Tensor":
+        return _to_var(other) + (-self)
 
-    def __mul__(self, other):
-        return vMul(self, other)
+    def __mul__(self, other: TensorLike) -> "Tensor":
+        other = _to_var(other)
+        result = Tensor(
+            tensor_mul(self.data, other.data),
+            requires_grad=(self.requires_grad or other.requires_grad),
+        )
+        if self.requires_grad:
+            result.parents.append(
+                (self, lambda x: grad_mul(x, self.data, other.data))
+            )
+        if other.requires_grad:
+            result.parents.append(
+                (other, lambda x: grad_mul(x, other.data, self.data))
+            )
+        return result
 
-    def __rmul__(self, other):
-        return vMul(other, self)
+    def __rmul__(self, other: TensorLike) -> "Tensor":
+        return _to_var(other) * self
 
-    def __truediv__(self, other):
-        return vMul(self, vPow(other, -1.0))
+    def __truediv__(self, other: TensorLike) -> "Tensor":
+        return self * (_to_var(other) ** -1.0)
 
-    def __rtruediv__(self, other):
-        return vMul(other, vPow(self, -1.0))
+    def __rtruediv__(self, other: TensorLike) -> "Tensor":
+        return _to_var(other) * (self**-1.0)
 
-    def __matmul__(self, other):
-        return vMatMul(self, other)
+    def __matmul__(self, other: TensorLike) -> "Tensor":
+        other = _to_var(other)
+        result = Tensor(
+            tensor_matmul(self.data, other.data),
+            requires_grad=(self.requires_grad or other.requires_grad),
+        )
+        if self.requires_grad:
+            result.parents.append(
+                (self, lambda x: grad_matmul(x, self.data, other.data, is_a=True))
+            )
+        if other.requires_grad:
+            result.parents.append(
+                (other, lambda x: grad_matmul(x, self.data, other.data, is_a=False))
+            )
+        return result
 
-    def __rmatmul__(self, other):
-        return vMatMul(other, self)
+    def __rmatmul__(self, other: TensorLike) -> "Tensor":
+        return _to_var(other) @ self
 
-    def __neg__(self):
-        return vMul(self, -1.0)
+    def __neg__(self) -> "Tensor":
+        return self * -1.0
 
-    def __pow__(self, exponent):
-        return vPow(self, exponent)
+    def __pow__(self, exponent: TensorLike) -> "Tensor":
+        exponent = _to_var(exponent)
+        result = Tensor(
+            tensor_pow(self.data, exponent.data),
+            requires_grad=(self.requires_grad or exponent.requires_grad),
+        )
+        if self.requires_grad:
+            result.parents.append(
+                (self, lambda x: grad_pow(x, self.data, exponent.data, is_a=True))
+            )
+        if exponent.requires_grad:
+            result.parents.append(
+                (
+                    exponent,
+                    lambda x: grad_pow(x, self.data, exponent.data, is_a=False),
+                )
+            )
+        return result
 
     @property
-    def T(self):
-        return vTranspose(self)
+    def T(self) -> "Tensor":
+        result = Tensor(tensor_transpose(self.data), requires_grad=self.requires_grad)
+        if self.requires_grad:
+            result.parents.append((self, lambda x: grad_transpose(x)))
+        return result
 
-    def sqrt(self):
-        return vSqrt(self)
+    def sqrt(self) -> "Tensor":
+        result = Tensor(tensor_sqrt(self.data), requires_grad=self.requires_grad)
+        if self.requires_grad:
+            result.parents.append((self, lambda x: grad_sqrt(x, self.data)))
+        return result
 
-    def sum(self, axis=None, keepdims=False):
-        result_value = np.sum(self.arr, axis=axis, keepdims=keepdims)
+    def sum(self, axis=None, keepdims=False) -> "Tensor":
+        result_value = tensor_sum(self.data, axis=axis, keepdims=keepdims)
         result = Tensor(result_value, requires_grad=self.requires_grad)
 
         if self.requires_grad:
 
-            def _grad_sum(_value):
-                if axis is None:
-                    return _value * np.ones_like(self.arr)
-
-                if not keepdims:
-                    # We need to "un-squeeze" the _value array to the same number
-                    # of dimensions as self.arr before broadcasting.
-                    _value_expanded = np.expand_dims(_value, axis=axis)
-                    return _value_expanded * np.ones_like(self.arr)
-                else:
-                    return _value * np.ones_like(self.arr)
+            def _grad_sum(_data: np.ndarray) -> np.ndarray:
+                return grad_sum(_data, self.data, axis, keepdims)
 
             result.parents.append((self, _grad_sum))
 
         return result
 
 
-def get_axes_broadcasting(incoming_grad, tensor: Tensor):
+def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
     sum_axes = []
-    for i in range(len(incoming_grad.shape)):
-        if i < len(tensor.shape):
-            if tensor.shape[i] == 1 and incoming_grad.shape[i] > 1:
+    for i in range(len(_data.shape)):
+        if i < len(arr.shape):
+            if arr.shape[i] == 1 and _data.shape[i] > 1:
                 sum_axes.append(i)
-        elif i >= len(tensor.shape):
+        elif i >= len(arr.shape):
             sum_axes.append(i)
     return sum_axes
 
 
-def vSqrt(A: Tensor):
-    A = _to_var(A)
-    result = Tensor(np.sqrt(A.arr), requires_grad=A.requires_grad)
-    if A.requires_grad:
-
-        def _grad_sqrt(_value):
-            return _value * (0.5 / np.sqrt(A.arr))
-
-        result.parents.append((A, _grad_sqrt))
-    return result
+# --- Gradient Functions (External, NumPy-based) ---
 
 
-def vTranspose(A: Tensor):
-    A = _to_var(A)
-    result = Tensor(A.arr.T, requires_grad=A.requires_grad)
-    if A.requires_grad:
-
-        def _grad_t(_value):
-            return _value.T
-
-        result.parents.append((A, _grad_t))
-    return result
+def grad_add(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+    sum_axes = get_axes_broadcasting(_data, arr1)
+    return tensor_sum(_data, axis=tuple(sum_axes), keepdims=True)
 
 
-def vMatMul(A: Tensor, B: Tensor):
-    A = _to_var(A)
-    B = _to_var(B)
-    result = Tensor(
-        np.dot(A.arr, B.arr), requires_grad=(A.requires_grad or B.requires_grad)
-    )
-    if A.requires_grad:
-
-        def _grad_a(_value):
-            return np.matmul(_value, B.arr.T)
-
-        result.parents.append((A, _grad_a))
-    if B.requires_grad:
-
-        def _grad_b(_value):
-            return np.matmul(A.arr.T, _value)
-
-        result.parents.append((B, _grad_b))
-    return result
+def grad_mul(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+    sum_axes = get_axes_broadcasting(_data, arr1)
+    return tensor_sum(tensor_mul(_data, arr2), axis=tuple(sum_axes), keepdims=True)
 
 
-def vAdd(A: Tensor | float | int, B: Tensor | float | int):
-    A = _to_var(A)
-    B = _to_var(B)
-    result = Tensor(A.arr + B.arr, requires_grad=(A.requires_grad or B.requires_grad))
-    if A.requires_grad:
-
-        def _grad_a(_value):
-            sum_axes = get_axes_broadcasting(_value, A)
-            return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
-
-        result.parents.append((A, _grad_a))
-    if B.requires_grad:
-
-        def _grad_b(_value):
-            sum_axes = get_axes_broadcasting(_value, B)
-            return np.sum(_value, axis=tuple(sum_axes), keepdims=True)
-
-        result.parents.append((B, _grad_b))
-    return result
+def grad_matmul(
+    _data: np.ndarray,
+    arr1: np.ndarray,
+    arr2: np.ndarray,
+    is_a: bool,
+) -> np.ndarray:
+    if is_a:
+        return tensor_matmul(_data, tensor_transpose(arr2))
+    else:
+        return tensor_matmul(tensor_transpose(arr1), _data)
 
 
-def vMul(A: TensorLike, B: TensorLike):
-    A = _to_var(A)
-    B = _to_var(B)
-    result = Tensor(A.arr * B.arr, requires_grad=(A.requires_grad or B.requires_grad))
-    if A.requires_grad:
-
-        def _grad_a(_value):
-            sum_axes = get_axes_broadcasting(_value, A)
-            return np.sum(_value * B.arr, axis=tuple(sum_axes), keepdims=True)
-
-        result.parents.append((A, _grad_a))
-
-    if B.requires_grad:
-
-        def _grad_b(incoming_grad):
-            sum_axes = get_axes_broadcasting(incoming_grad, B)
-            return np.sum(incoming_grad * A.arr, axis=tuple(sum_axes), keepdims=True)
-
-        result.parents.append((B, _grad_b))
-    return result
+def grad_pow(
+    _data: np.ndarray,
+    arr: np.ndarray,
+    exponent: np.ndarray,
+    is_a: bool,
+) -> np.ndarray:
+    if is_a:
+        local_grad = tensor_mul(exponent, tensor_pow(arr, exponent - 1))
+        sum_axes = get_axes_broadcasting(_data, arr)
+        return tensor_sum(
+            tensor_mul(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+        )
+    else:
+        local_grad = tensor_mul(tensor_pow(arr, exponent), tensor_log(arr))
+        sum_axes = get_axes_broadcasting(_data, exponent)
+        return tensor_sum(
+            tensor_mul(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+        )
 
 
-def vPow(A: TensorLike, exponent: TensorLike) -> Tensor:
-    A = _to_var(A)
-    exponent = _to_var(exponent)  # Corrected: Use _to_var
-    result = Tensor(
-        np.power(A.arr, exponent.arr),
-        requires_grad=(A.requires_grad or exponent.requires_grad),
-    )
-    if A.requires_grad:
+def grad_sqrt(_data: np.ndarray, arr: np.ndarray) -> np.ndarray:
+    return tensor_mul(_data, (0.5 / tensor_sqrt(arr)))
 
-        def _grad_a(_value):
-            local_grad = exponent.arr * np.power(A.arr, exponent.arr - 1)
-            sum_axes = get_axes_broadcasting(_value, A)
-            return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
-        result.parents.append((A, _grad_a))
+def grad_sum(_data: np.ndarray, arr: np.ndarray, axis, keepdims) -> np.ndarray:
+    if axis is None:
+        return tensor_mul(_data, tensor_ones_like(arr))
 
-    if exponent.requires_grad:
+    if not keepdims:
+        _data_expanded = tensor_expand_dims(_data, axis=axis)
+        return tensor_mul(_data_expanded, tensor_ones_like(arr))
+    else:
+        return tensor_mul(_data, tensor_ones_like(arr))
 
-        def _grad_exponent(_value):
-            local_grad = np.power(A.arr, exponent.arr) * np.log(A.arr)
-            sum_axes = get_axes_broadcasting(_value, exponent)
-            return np.sum(_value * local_grad, axis=tuple(sum_axes), keepdims=True)
 
-        result.parents.append((exponent, _grad_exponent))
-    return result
+def grad_transpose(_data: np.ndarray) -> np.ndarray:
+    return _data.T
+
+
+# --- NumPy-based functions ---
+def tensor_sqrt(arr: np.ndarray) -> np.ndarray:
+    return np.sqrt(arr)
+
+
+def tensor_transpose(arr: np.ndarray) -> np.ndarray:
+    return arr.T
+
+
+def tensor_matmul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+    return np.dot(arr1, arr2)
+
+
+def tensor_add(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+    return arr1 + arr2
+
+
+def tensor_mul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+    return arr1 * arr2
+
+
+def tensor_pow(arr: np.ndarray, exponent: np.ndarray) -> np.ndarray:
+    return np.power(arr, exponent)
+
+
+def tensor_sum(arr: np.ndarray, axis=None, keepdims=False) -> np.ndarray:
+    return np.sum(arr, axis=axis, keepdims=keepdims)
+
+
+def tensor_reshape(arr: np.ndarray, shape) -> np.ndarray:
+    return arr.reshape(shape)
+
+
+def tensor_zeros_like(arr: np.ndarray) -> np.ndarray:
+    return np.zeros_like(arr)
+
+
+def tensor_zeros(shape) -> np.ndarray:
+    return np.zeros(shape)
+
+
+def tensor_ones_like(arr: np.ndarray) -> np.ndarray:
+    return np.ones_like(arr)
+
+
+def tensor_expand_dims(arr: np.ndarray, axis) -> np.ndarray:
+    return np.expand_dims(arr, axis)
+
+
+def tensor_log(arr: np.ndarray) -> np.ndarray:
+    return np.log(arr)
+

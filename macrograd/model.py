@@ -70,12 +70,12 @@ class SGD_Optimizer:
             if self.min:
 
                 def step_fn(param):
-                    param.arr -= param.grad * self.lr
+                    param._data -= param.grad * self.lr
                     return param
             else:
 
                 def step_fn(param):
-                    param.arr += param.grad * self.lr
+                    param._data += param.grad * self.lr
                     return param
 
             self.step_fn = step_fn
@@ -104,17 +104,17 @@ class SGD_MomentumOptimizer:
         for param in params_copy:
             self.velocities.append(
                 Tensor(
-                    np.zeros_like(param.arr), requires_grad=False, precision=np.float16
+                    np.zeros_like(param._data), requires_grad=False, precision=np.float32
                 )
             )
 
         del params_copy
 
     def step_fn(self, param: Tensor, index: int):
-        self.velocities[index].arr = (
-            self.alpha.arr * self.velocities[index].arr - self.lr * param.grad
+        self.velocities[index]._data = (
+            self.alpha.data * self.velocities[index]._data - self.lr * param.grad
         )
-        param.arr = param.arr + self.velocities[index].arr
+        param.data = param.data + self.velocities[index]._data
         return param
 
     def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
