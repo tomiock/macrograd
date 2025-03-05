@@ -4,3 +4,4 @@ numpy
 numba
 pandas
 tqdm
+graphviz
