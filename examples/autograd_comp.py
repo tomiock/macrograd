@@ -1,17 +1,18 @@
 from macrograd import Tensor
 from macrograd.tensor import get_axes_broadcasting
 
-def my_function(A, B):
-    return 2 * (A + B).sum()
+def my_function_bias(x, w, b):
+    return (x @ w) + b
+ 
+def my_function(x, w):
+    return (x @ w)
 
+x = Tensor([1, 2])
+w = Tensor([2, 1], requires_grad=True)
+b = Tensor([3], requires_grad=True)
 
-a = Tensor([2, 3], requires_grad=1)
-b = Tensor([4, 5], requires_grad=1)
+z = my_function_bias(x, w, b)
 
-c = a * b
-c.backprop()
-
-print(f'{a.grad = }')
-
-sum_axes = get_axes_broadcasting(a.grad, a.shape)
-print(sum_axes)
+n, e = z._trace()
+print(n)
+print(e)

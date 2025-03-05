@@ -1,14 +1,16 @@
 from collections.abc import Callable
+from typing import Optional
 import numpy as np
 from macrograd.tensor import Tensor
 
 
 class Linear:
-    def __init__(self, in_dims, out_dims):
+    def __init__(self, in_dims, out_dims, initilization: Optional[str] = None):
         self.in_dims = in_dims
         self.out_dims = out_dims
         self._w_shape = (in_dims, out_dims)
         self._b_shape = (1, out_dims)
+        self.initilization = initilization
 
         self.w = None
         self.b = None
@@ -21,6 +23,7 @@ class Linear:
         std_dev = np.sqrt(2.0 / self.in_dims)
         self.w = Tensor(np.random.randn(*self._w_shape) * std_dev, requires_grad=True)
 
+        # TODO: small positive, so everything moves to the linear side of the relu
         self.b = Tensor(
             np.zeros(self._b_shape), requires_grad=True
         )
@@ -70,12 +73,12 @@ class SGD_Optimizer:
             if self.min:
 
                 def step_fn(param):
-                    param._data -= param.grad * self.lr
+                    param.data -= param.grad * self.lr
                     return param
             else:
 
                 def step_fn(param):
-                    param._data += param.grad * self.lr
+                    param.data += param.grad * self.lr
                     return param
 
             self.step_fn = step_fn
@@ -104,17 +107,17 @@ class SGD_MomentumOptimizer:
         for param in params_copy:
             self.velocities.append(
                 Tensor(
-                    np.zeros_like(param._data), requires_grad=False, precision=np.float32
+                    np.zeros_like(param.data), requires_grad=False, precision=np.float32
                 )
             )
 
         del params_copy
 
     def step_fn(self, param: Tensor, index: int):
-        self.velocities[index]._data = (
-            self.alpha.data * self.velocities[index]._data - self.lr * param.grad
+        self.velocities[index].data = (
+            self.alpha.data * self.velocities[index].data - self.lr * param.grad
         )
-        param.data = param.data + self.velocities[index]._data
+        param.data = param.data + self.velocities[index].data
         return param
 
     def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:

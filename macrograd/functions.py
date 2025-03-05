@@ -13,7 +13,7 @@ def sin(A: Tensor):
         def _grad_a(_value):
             return np.cos(_value)
 
-        result.parents.append((A, _grad_a))
+        result.parents.add((A, _grad_a))
 
     return result
 
@@ -27,7 +27,7 @@ def cos(A: Tensor):
         def _grad_a(_value):
             return -np.sin(_value)
 
-        result.parents.append((A, _grad_a))
+        result.parents.add((A, _grad_a))
 
     return result
 
@@ -41,7 +41,7 @@ def ln(A: Tensor):
         def _grad_a(_value):
             return _value * (1.0 / A.data)
 
-        result.parents.append((A, _grad_a))
+        result.parents.add((A, _grad_a))
 
     return result
 
@@ -55,7 +55,7 @@ def log2(A: Tensor):
         def _grad_a(_value):
             return _value * (1.0 / (A.data * np.log(2.0)))
 
-        result.parents.append((A, _grad_a))
+        result.parents.add((A, _grad_a))
 
     return result
 
@@ -76,7 +76,7 @@ def MSE(x_1: Tensor, x_2: Tensor):
                 incoming_grad * local_grad, axis=tuple(sum_axes), keepdims=True
             )
 
-        result.parents.append((x_1, _grad_x1))
+        result.parents.add((x_1, _grad_x1))
 
     if x_2.requires_grad:
 
@@ -87,7 +87,7 @@ def MSE(x_1: Tensor, x_2: Tensor):
                 incoming_grad * local_grad, axis=tuple(sum_axes), keepdims=True
             )
 
-        result.parents.append((x_2, _grad_x2))
+        result.parents.add((x_2, _grad_x2))
 
     return result
 
@@ -115,7 +115,7 @@ def BCE(x: Tensor, y: Tensor) -> Tensor:
                 incoming_grad * local_grad, axis=tuple(sum_axes), keepdims=True
             )
 
-        result.parents.append((x, _grad_x))
+        result.parents.add((x, _grad_x))
         # x.children.append(result)
 
     return result
@@ -133,7 +133,7 @@ def sigmoid(A: Tensor):
             local_grad = sig * (1 - sig)
             return _value * local_grad
 
-        result.parents.append((A, _grad_a))
+        result.parents.add((A, _grad_a))
     return result
 
 
@@ -148,7 +148,7 @@ def relu(A: Tensor):
             local_grad = np.array((A.data > 0)).astype(A.data.dtype)
             return _value * local_grad
 
-        result.parents.append((A, _grad_relu))
+        result.parents.add((A, _grad_relu))
 
     return result
 
@@ -169,6 +169,6 @@ def softmax(x: Tensor) -> Tensor:
             # This is the key optimization
             return (incoming_grad - np.sum(incoming_grad * result.data, axis=-1, keepdims=True)) * result.data
 
-        result.parents.append((x, _grad_x))
+        result.parents.add((x, _grad_x))
 
     return result

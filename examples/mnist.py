@@ -61,7 +61,7 @@ def create_minibatches(dataset, batch_size):
     np.random.shuffle(indices)  # Shuffle the data
     minibatches = []
 
-    for i in range(0, num_samples, batch_size):
+    for i in range(0, 1000, batch_size):
         batch_indices = indices[i : i + batch_size]
         batch_images = dataset.images[batch_indices]
         batch_labels = dataset.labels[batch_indices]
@@ -136,20 +136,24 @@ optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=paramet
 loss_history = []
 batch_loss_history = []
 
-for epoch in range(epochs):
-    epoch_losses = []
-    for X_batch, y_batch in tqdm(train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"):
-        y_pred = model(X_batch)
+def train_run(parameters):
+    for epoch in range(epochs):
+        epoch_losses = []
+        for X_batch, y_batch in tqdm(train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"):
+            y_pred = model(X_batch)
 
-        loss = cross_entropy(y_batch, y_pred)
+            loss = cross_entropy(y_batch, y_pred)
 
-        parameters = optimizer.step(loss, parameters)
+            parameters = optimizer.step(loss, parameters)
 
-        epoch_losses.append(loss.data)
-        batch_loss_history.append(loss.data)
+            epoch_losses.append(loss.data)
+            batch_loss_history.append(loss.data)
 
-    epoch_loss_mean = np.mean(epoch_losses)
-    loss_history.append(epoch_loss_mean)
+        epoch_loss_mean = np.mean(epoch_losses)
+        loss_history.append(epoch_loss_mean)
+    return parameters
+
+train_run(parameters)
 
 test_accuracy = evaluate_model(model, test_minibatches)
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
