@@ -136,10 +136,13 @@ optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=paramet
 loss_history = []
 batch_loss_history = []
 
+
 def train_run(parameters):
     for epoch in range(epochs):
         epoch_losses = []
-        for X_batch, y_batch in tqdm(train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"):
+        for X_batch, y_batch in tqdm(
+            train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"
+        ):
             y_pred = model(X_batch)
 
             loss = cross_entropy(y_batch, y_pred)
@@ -152,6 +155,7 @@ def train_run(parameters):
         epoch_loss_mean = np.mean(epoch_losses)
         loss_history.append(epoch_loss_mean)
     return parameters
+
 
 train_run(parameters)
 

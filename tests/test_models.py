@@ -63,6 +63,7 @@ class TestMacrogradModel(unittest.TestCase):
         self.lr = 0.1
         self.num_epochs = 100  # Reduced for testing
 
+    @pytest.mark.slow
     def test_training_loop(self):
         initial_loss = None
         final_loss = None

@@ -15,6 +15,7 @@ def sin(A: Tensor):
 
         result.parents.add((A, _grad_a))
 
+    result._nodes_edges.add(A)
     return result
 
 
@@ -29,11 +30,12 @@ def cos(A: Tensor):
 
         result.parents.add((A, _grad_a))
 
+    result._nodes_edges.add(A)
     return result
 
 
 def ln(A: Tensor):
-    result = Tensor(np.log(A.data))
+    result = Tensor(np.log(A.data), _op='ln')
     result.requires_grad = A.requires_grad
 
     if A.requires_grad:
@@ -43,11 +45,12 @@ def ln(A: Tensor):
 
         result.parents.add((A, _grad_a))
 
+    result._nodes_edges.add(A)
     return result
 
 
 def log2(A: Tensor):
-    result = Tensor(np.log2(A.data))
+    result = Tensor(np.log2(A.data), _op='log2')
     result.requires_grad = A.requires_grad
 
     if A.requires_grad:
@@ -57,6 +60,7 @@ def log2(A: Tensor):
 
         result.parents.add((A, _grad_a))
 
+    result._nodes_edges.add(A)
     return result
 
 
@@ -123,7 +127,7 @@ def BCE(x: Tensor, y: Tensor) -> Tensor:
 
 def sigmoid(A: Tensor):
     A = _to_var(A)
-    result = Tensor(1.0 / (1.0 + np.exp(-A.data)))
+    result = Tensor(1.0 / (1.0 + np.exp(-A.data)), _op='sigmoid')
     result.requires_grad = A.requires_grad
 
     if result.requires_grad:
@@ -134,12 +138,13 @@ def sigmoid(A: Tensor):
             return _value * local_grad
 
         result.parents.add((A, _grad_a))
+    result._nodes_edges.add(A)
     return result
 
 
 def relu(A: Tensor):
     A = _to_var(A)
-    result = Tensor(np.maximum(0, A.data))
+    result = Tensor(np.maximum(0, A.data), _op='relu')
     result.requires_grad = A.requires_grad
 
     if result.requires_grad:
@@ -150,6 +155,7 @@ def relu(A: Tensor):
 
         result.parents.add((A, _grad_relu))
 
+    result._nodes_edges.add(A)
     return result
 
 

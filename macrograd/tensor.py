@@ -1,11 +1,10 @@
 import graphviz
 from collections.abc import Callable
+from typing import Optional
 import numpy as np
 import numpy.typing as npt
 
 import numba as nb
-
-import os
 
 type ArrayLike = int | float | np.ndarray | list | tuple
 type TensorLike = Tensor | int | float | np.ndarray | list
@@ -19,16 +18,18 @@ def _to_var(x: TensorLike) -> "Tensor":
 
 
 class Tensor:
-    def __init__(self, array: ArrayLike, requires_grad=False, precision=np.float32, _op=''):
+    def __init__(
+        self, array: ArrayLike, requires_grad=False, precision=np.float32, _op=""
+    ):
         self.requires_grad = requires_grad
-        self.parents: set[
-            tuple[Tensor, Callable]
-        ] = set()
+        # only for gradient calculation
+        self.parents: set[tuple[Tensor, Optional[Callable]]] = set()
         self.data = np.array(array, dtype=precision)
         self.dim = self.data.ndim
         self.shape = self.data.shape
         self._grad: npt.ArrayLike | None = None
-        self._op =  _op
+        self._op = _op
+        self._nodes_edges: set = set()  # "copy" of the parents
 
     @property
     def grad(self):
@@ -97,20 +98,33 @@ class Tensor:
         def build(v):
             if v not in nodes:
                 nodes.add(v)
-                for child, _ in v.parents:
+                for child in v._nodes_edges:
                     edges.add((child, v))
-                    build(child)
+                    build(child)  # recursive
 
         build(self)
         return nodes, edges
 
     def get_graph(self):
-        dot = graphviz.Digraph(graph_attr={'rankdir': 'LR'})
+        dot = graphviz.Digraph(graph_attr={"rankdir": "LR"})
 
         nodes, edges = self._trace()
         for n in nodes:
             uid = str(id(n))
-            dot.node(name=uid, label=f"{{ {n.__class__.__name__} | shape {n.shape} }}", shape='record')
+            if n.requires_grad:
+                has_grad = "grad enabled"
+                n_name = n.__class__.__name__
+            else:
+                has_grad = "constant"
+
+                n_name = n.__class__.__name__
+                if n.shape == ():
+                    n_name = str(n.data)
+            dot.node(
+                name=uid,
+                label=f"{{ {n_name} | {{ shape {n.shape} | {has_grad} }} }}",
+                shape="record",
+            )
             if n._op:
                 dot.node(name=uid + n._op, label=n._op)
                 dot.edge(uid + n._op, uid)
@@ -120,7 +134,6 @@ class Tensor:
 
         return dot
 
-
     def __add__(self, other: TensorLike) -> "Tensor":
         other = _to_var(other)
         assert type(other.data) is np.ndarray
@@ -128,7 +141,7 @@ class Tensor:
         result = Tensor(
             tensor_add(self.data, other.data),
             requires_grad=(self.requires_grad or other.requires_grad),
-            _op='add'
+            _op="add",
         )
         if self.requires_grad:
             # Pass arrays to the external gradient function.
@@ -136,15 +149,16 @@ class Tensor:
             def _calc_grad_add_self(x):
                 return grad_add(x, self.data, other.data)
 
-            result.parents.add((self, _calc_grad_add_self))  # Pass A and B
+            result.parents.add((self, _calc_grad_add_self))
         if other.requires_grad:
 
             def _calc_grad_add_other(x):
                 return grad_add(x, other.data, self.data)
 
-            result.parents.add(
-                (other, _calc_grad_add_other)
-            )  # Pass B and A (order matters for broadcasting)
+            result.parents.add((other, _calc_grad_add_other))
+
+        result._nodes_edges.add(self)
+        result._nodes_edges.add(other)
         return result
 
     def __radd__(self, other: TensorLike) -> "Tensor":
@@ -163,7 +177,7 @@ class Tensor:
         result = Tensor(
             tensor_mul(self.data, other.data),
             requires_grad=(self.requires_grad or other.requires_grad),
-            _op='mul'
+            _op="mul",
         )
         if self.requires_grad:
 
@@ -177,6 +191,9 @@ class Tensor:
                 return grad_mul(_value, other.data, self.data)
 
             result.parents.add((other, _calc_grad_mul_other))
+
+        result._nodes_edges.add(self)
+        result._nodes_edges.add(other)
         return result
 
     def __rmul__(self, other: TensorLike) -> "Tensor":
@@ -195,7 +212,7 @@ class Tensor:
         result = Tensor(
             tensor_matmul(self.data, other.data),
             requires_grad=(self.requires_grad or other.requires_grad),
-            _op='matmul'
+            _op="matmul",
         )
         if self.requires_grad:
 
@@ -209,6 +226,8 @@ class Tensor:
                 return grad_matmul(x, self.data, other.data, is_a=False)
 
             result.parents.add((other, _calc_grad_matmul_other))
+        result._nodes_edges.add(self)
+        result._nodes_edges.add(other)
         return result
 
     def __rmatmul__(self, other: TensorLike) -> "Tensor":
@@ -224,7 +243,7 @@ class Tensor:
         result = Tensor(
             tensor_pow(self.data, exponent.data),
             requires_grad=(self.requires_grad or exponent.requires_grad),
-            _op='pow'
+            _op="pow",
         )
         if self.requires_grad:
 
@@ -238,32 +257,40 @@ class Tensor:
                 return grad_pow(x, self.data, exponent.data, is_a=False)
 
             result.parents.add((exponent, _calc_grad_pow_other))
+        result._nodes_edges.add(self)
+        result._nodes_edges.add(exponent)
         return result
 
     @property
     def T(self) -> "Tensor":
-        result = Tensor(tensor_transpose(self.data), requires_grad=self.requires_grad, _op='T')
+        result = Tensor(
+            tensor_transpose(self.data), requires_grad=self.requires_grad, _op="T"
+        )
         if self.requires_grad:
 
             def _calc_grad_transpose(x):
                 return grad_transpose(x)
 
             result.parents.add((self, _calc_grad_transpose))
+        result._nodes_edges.add(self)
         return result
 
     def sqrt(self) -> "Tensor":
-        result = Tensor(tensor_sqrt(self.data), requires_grad=self.requires_grad, _op='sqrt')
+        result = Tensor(
+            tensor_sqrt(self.data), requires_grad=self.requires_grad, _op="sqrt"
+        )
         if self.requires_grad:
 
             def _calc_grad_sqrt(x):
                 return grad_sqrt(x, self.data)
 
             result.parents.add((self, _calc_grad_sqrt))
+        result._nodes_edges.add(self)
         return result
 
     def sum(self, axis=None, keepdims=False) -> "Tensor":
         result_value = tensor_sum(self.data, axis=axis, keepdims=keepdims)
-        result = Tensor(result_value, requires_grad=self.requires_grad, _op='sum')
+        result = Tensor(result_value, requires_grad=self.requires_grad, _op="sum")
 
         if self.requires_grad:
 
@@ -272,6 +299,7 @@ class Tensor:
 
             result.parents.add((self, _grad_sum))
 
+        result._nodes_edges.add(self)
         return result
 
 
@@ -446,4 +474,3 @@ def tensor_expand_dims(arr: np.ndarray, axis) -> np.ndarray:
 @nb.njit
 def tensor_log(arr: np.ndarray) -> np.ndarray:
     return np.log(arr)
-
