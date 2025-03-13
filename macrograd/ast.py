@@ -2,6 +2,7 @@ import ast
 import functools
 import inspect
 
+
 class LoopBreaker(ast.NodeTransformer):
     def __init__(self):
         super().__init__()
@@ -42,7 +43,6 @@ def analyze_function(target_function_name, processing_func):
                     print(f"Decorator: Could not find FunctionDef for {func.__name__}")
                     return func(*args, **kwargs)
 
-                original_decorators = func_def.decorator_list
                 func_def.decorator_list = []
                 # we remove the decorators from the functions
                 # when the modified functions is called, the decorator is not executed
@@ -84,9 +84,7 @@ def analyze_function(target_function_name, processing_func):
                                                         args[0], first_arg.attr
                                                     )
                                         elif isinstance(first_arg, ast.Constant):
-                                            self.first_arg_value = (
-                                                first_arg.value
-                                            )
+                                            self.first_arg_value = first_arg.value
                                     except Exception as e:
                                         print(
                                             f"Decorator: Error during argument evaluation: {e}"
@@ -146,9 +144,7 @@ def analyze_function(target_function_name, processing_func):
 
                 injector = InjectCapture()
                 modified_tree = injector.visit(modified_tree)
-                modified_tree = ast.fix_missing_locations(
-                    modified_tree
-                )
+                modified_tree = ast.fix_missing_locations(modified_tree)
 
                 # --- 3. Compile and Execute ---
                 compiled_code = compile(modified_tree, "<string>", "exec")
@@ -163,9 +159,9 @@ def analyze_function(target_function_name, processing_func):
 
                 # --- 5. Analyze and Process ---
                 analyzer = FunctionAnalyzer()
-                analyzer.visit(modified_tree) # we analyze the tree to intercept
+                analyzer.visit(modified_tree)  # we analyze the tree to intercept
                 # the variable that we want
-                
+
                 if analyzer.first_arg_value is not None:
                     # the found variable is used
                     value = processing_func(analyzer.first_arg_value)
@@ -182,4 +178,3 @@ def analyze_function(target_function_name, processing_func):
         return wrapper
 
     return decorator
-

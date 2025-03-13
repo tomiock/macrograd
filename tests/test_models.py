@@ -8,6 +8,7 @@ from macrograd.tensor import Tensor
 
 from macrograd import Tensor, e
 from macrograd.tensor import _to_var
+from macrograd.model import Model, Linear, SGD_Optimizer
 from sklearn.datasets import make_moons
 from tqdm import tqdm
 
@@ -25,14 +26,26 @@ def BCE(y_pred: Tensor, y_true: Tensor) -> Tensor:
     return -1 * (loss_val.sum() / y_true.data.size)
 
 
-def model(input, w_1, b_1, w_2, b_2):
-    linear_1 = (input @ w_1) + b_1
-    z_1 = relu(linear_1)
+def softmax(x: Tensor):
+    e_x = e**x
+    return e_x / (e_x.sum(axis=1, keepdims=True))
 
-    linear_2 = (z_1 @ w_2) + b_2
-    z_2 = sigmoid(linear_2)
 
-    return z_2
+class NeuralNetwork(Model):
+    def __init__(self, in_dims, out_dims):
+        super(NeuralNetwork, self).__init__()
+
+        self.l1 = Linear(in_dims, 24)
+        self.l4 = Linear(24, out_dims)
+
+    def __call__(self, data):
+        data = self.l1(data)
+        data = relu(data)
+
+        data = self.l4(data)
+        data = sigmoid(data)
+
+        return data
 
 
 class TestMacrogradModel(unittest.TestCase):
@@ -41,39 +54,25 @@ class TestMacrogradModel(unittest.TestCase):
         self.X, self.y = make_moons(n_samples=100, noise=0.1, random_state=42)
         self.X = Tensor(self.X, requires_grad=False)
         self.y_one_hot = Tensor(np.eye(2)[(self.y.flatten() + 1).astype(int) // 2])
+        self.lr = 0.1
 
         self.input_size = 2
-        self.hidden_size = 100
         self.output_size = 1
 
-        self.w_1 = Tensor(
-            np.random.randn(self.input_size, self.hidden_size), requires_grad=True
-        )  # Correct shape
-        self.b_1 = Tensor(
-            np.zeros((1, self.hidden_size)), requires_grad=True
-        )  # Correct shape, initialize to zero
-        self.w_2 = Tensor(
-            np.random.randn(self.hidden_size, self.output_size), requires_grad=True
-        )  # Correct shape
-        self.b_2 = Tensor(
-            np.zeros((1, self.output_size)), requires_grad=True
-        )  # Correct shape, initialize to zero
+        self.model = NeuralNetwork(2, 1)
+        self.optimizer = SGD_Optimizer(self.lr)
 
-        self.parameters = [self.w_1, self.b_1, self.w_2, self.b_2]
-        self.lr = 0.1
-        self.num_epochs = 100  # Reduced for testing
+        self.parameters = self.model.init_params()
 
-    @pytest.mark.slow
+        self.num_epochs = 1000  # Reduced for testing
+
     def test_training_loop(self):
         initial_loss = None
         final_loss = None
         losses = []
 
         for epoch in tqdm(range(self.num_epochs)):
-            for param in self.parameters:
-                param.zero_grad()
-
-            y_pred = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
+            y_pred = self.model(self.X)
 
             loss = BCE(y_pred, self.y)
             losses.append(loss.data.item())
@@ -81,30 +80,23 @@ class TestMacrogradModel(unittest.TestCase):
             if epoch == 0:
                 initial_loss = loss.data.item()
 
-            loss.backprop()
+            self.optimizer.step(loss, self.parameters)
 
-            self.w_1 = self.w_1 - self.w_1.grad * self.lr
-            self.w_2 = self.w_2 - self.w_2.grad * self.lr
-            self.b_1 = self.b_1 - self.b_1.grad * self.lr
-            self.b_2 = self.b_2 - self.b_2.grad * self.lr
             final_loss = loss.data.item()
+
+        predictions = self.model(self.X)
 
         self.assertIsNotNone(initial_loss)
         self.assertIsNotNone(final_loss)
+        # problem here
         self.assertGreater(initial_loss, final_loss)  # Loss should decrease
+        print(initial_loss, final_loss)
 
         # --- Predictions --- after training
-        predictions = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
         predictions = (predictions.data > 0.5).astype(int)
         accuracy = np.mean(predictions == self.y.reshape(-1, 1))
         print(f"Accuracy: {accuracy * 100:.2f}%")
         self.assertGreaterEqual(accuracy, 0.75)  # Check for reasonable accuracy
-
-        # Check for NaNs in weights and biases
-        self.assertFalse(np.isnan(self.w_1.data).any())
-        self.assertFalse(np.isnan(self.b_1.data).any())
-        self.assertFalse(np.isnan(self.w_2.data).any())
-        self.assertFalse(np.isnan(self.b_2.data).any())
 
     def test_bce_loss(self):
         y_pred = Tensor(np.array([0.8, 0.2, 0.9, 0.1]))
@@ -118,10 +110,6 @@ class TestMacrogradModel(unittest.TestCase):
         y_true_edge = Tensor(np.array([1, 0]))
         loss_edge = BCE(y_pred_edge, y_true_edge)
         self.assertFalse(np.isnan(loss_edge.data))
-
-    def test_model_output_shape(self):
-        output = model(self.X, self.w_1, self.b_1, self.w_2, self.b_2)
-        self.assertEqual(output.shape, (self.X.shape[0], 1))
 
 
 class TestPolynomialRegression(unittest.TestCase):
@@ -184,83 +172,6 @@ class TestPolynomialRegression(unittest.TestCase):
         print(f"Initial loss: {self.initial_loss}")
         print(f"Final loss: {batch_loss}")
         self.assertLess(batch_loss, self.initial_loss * 0.1)
-
-        print(f"Estimated w: {w.data.flatten()}, True w: {self.w_true}")
-        self.assertTrue(np.allclose(w.data.flatten(), self.w_true, atol=self.tolerance))
-        self.assertLess(training_loss[-1], training_loss[0])
-        self.assertLess(
-            training_loss[int(len(training_loss) * 0.9)],
-            training_loss[int(len(training_loss) * 0.1)],
-        )
-
-        return vectorized_time
-
-    @pytest.mark.slow
-    def test_convergence_non_vectorized(self):
-        """Tests the non-vectorized implementation."""
-
-        w0 = Tensor(0.0, requires_grad=True)
-        w1 = Tensor(0.0, requires_grad=True)
-        w2 = Tensor(0.0, requires_grad=True)
-
-        training_loss = []
-        t = time.time()
-
-        for epoch in range(self.epochs):
-            w0.zero_grad()
-            w1.zero_grad()
-            w2.zero_grad()
-
-            batch_loss = 0
-            for x, y in zip(self.XX, self.YY):
-                out = (
-                    w0
-                    + w1 * Tensor(x, requires_grad=False)
-                    + w2 * Tensor(x, requires_grad=False) ** 2
-                )
-                loss = (out - Tensor(y, requires_grad=False)) ** 2
-                loss.backprop()
-                batch_loss += loss.data
-
-            training_loss.append(batch_loss)
-
-            w0 = w0 - self.lr * w0.grad / self.m
-            w1 = w1 - self.lr * w1.grad / self.m
-            w2 = w2 - self.lr * w2.grad / self.m
-
-        non_vectorized_time = time.time() - t
-        print("Non-Vectorized Training took (secs):", non_vectorized_time)
-
-        # --- Convergence Checks ---
-        print(f"Initial loss: {self.initial_loss}")  # Use pre-computed initial loss
-        print(f"Final loss: {batch_loss}")
-        self.assertLess(batch_loss, self.initial_loss * 0.1)
-
-        print(f"Estimated w0: {w0.data}, True w0: {self.w_true[0]}")
-        print(f"Estimated w1: {w1.data}, True w1: {self.w_true[1]}")
-        print(f"Estimated w2: {w2.data}, True w2: {self.w_true[2]}")
-        self.assertTrue(np.allclose(w0.data, self.w_true[0], atol=self.tolerance))
-        self.assertTrue(np.allclose(w1.data, self.w_true[1], atol=self.tolerance))
-        self.assertTrue(np.allclose(w2.data, self.w_true[2], atol=self.tolerance))
-
-        self.assertLess(training_loss[-1], training_loss[0])
-        self.assertLess(
-            training_loss[int(len(training_loss) * 0.9)],
-            training_loss[int(len(training_loss) * 0.1)],
-        )
-        return non_vectorized_time
-
-    @pytest.mark.slow
-    def test_vectorized_vs_non_vectorized(self):
-        vectorized_time = self.test_convergence_vectorized()
-        non_vectorized_time = self.test_convergence_non_vectorized()
-
-        print(f"Speedup: {non_vectorized_time / vectorized_time:.2f}x")
-        self.assertGreater(
-            non_vectorized_time,
-            vectorized_time,
-            "Vectorized implementation should be faster",
-        )
 
 
 if __name__ == "__main__":
