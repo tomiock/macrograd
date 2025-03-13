@@ -10,7 +10,7 @@
         flake-utils.lib.eachDefaultSystem (system:
             let
                 pkgs = nixpkgs.legacyPackages.${system};
-                python = pkgs.python313;
+                python = pkgs.python312;
                 pythonPackages = python.pkgs;
                 lib-path = with pkgs; pkgs.lib.makeLibraryPath [
                     libffi
@@ -62,6 +62,7 @@ EOF
                         pythonPackages.torch
                         pythonPackages.torchvision
                         pythonPackages.pytest
+                        pythonPackages.ray
                         pythonPackages.autograd
                         pythonPackages.graphviz
                         pythonPackages.pandas

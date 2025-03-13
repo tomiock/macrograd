@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import Optional
 import numpy as np
 from macrograd.tensor import Tensor
@@ -21,11 +20,11 @@ class Linear:
 
     def init_params(self):
         std_dev = np.sqrt(2.0 / self.in_dims)
-        self.w = Tensor(np.random.randn(*self._w_shape) * std_dev, requires_grad=True)
+        self.w = Tensor(np.random.randn(*self._w_shape) * std_dev, requires_grad=True, label="w")
 
         # TODO: small positive, so everything moves to the linear side of the relu
         self.b = Tensor(
-            np.zeros(self._b_shape), requires_grad=True
+            np.zeros(self._b_shape), requires_grad=True, label="b"
         )
 
         return [self.w, self.b]

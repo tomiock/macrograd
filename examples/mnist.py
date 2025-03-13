@@ -10,6 +10,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from macrograd.tensor import get_formula, get_graph
+from macrograd.ast import analyze_function
+
 
 def cross_entropy(y_true, y_pred):
     return -1 * (y_true * log2(y_pred)).sum() / y_true.data.shape[0]
@@ -61,7 +64,7 @@ def create_minibatches(dataset, batch_size):
     np.random.shuffle(indices)  # Shuffle the data
     minibatches = []
 
-    for i in range(0, 1000, batch_size):
+    for i in range(0, 2000, batch_size):
         batch_indices = indices[i : i + batch_size]
         batch_images = dataset.images[batch_indices]
         batch_labels = dataset.labels[batch_indices]
@@ -137,6 +140,7 @@ loss_history = []
 batch_loss_history = []
 
 
+#@analyze_function("optimizer.step", get_formula)
 def train_run(parameters):
     for epoch in range(epochs):
         epoch_losses = []
@@ -147,6 +151,7 @@ def train_run(parameters):
 
             loss = cross_entropy(y_batch, y_pred)
 
+            loss._grad = 3.14
             parameters = optimizer.step(loss, parameters)
 
             epoch_losses.append(loss.data)
@@ -157,7 +162,7 @@ def train_run(parameters):
     return parameters
 
 
-train_run(parameters)
+result1 = train_run(parameters)
 
 test_accuracy = evaluate_model(model, test_minibatches)
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")

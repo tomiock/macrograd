@@ -61,6 +61,7 @@ def log2(A: Tensor):
         result.parents.add((A, _grad_a))
 
     result._nodes_edges.add(A)
+    #print(f"{result.shape} = {result._op}({A.label})")
     return result
 
 
@@ -156,6 +157,7 @@ def relu(A: Tensor):
         result.parents.add((A, _grad_relu))
 
     result._nodes_edges.add(A)
+    #print(f"{result.shape} = {result._op}({A.label})")
     return result
 
 

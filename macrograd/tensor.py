@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import graphviz
 from collections.abc import Callable
 from typing import Optional
@@ -17,9 +18,23 @@ def _to_var(x: TensorLike) -> "Tensor":
         return Tensor(np.array(x))
 
 
+@dataclass
+class Node:
+    label: str
+    op: str
+    shape: tuple
+    grad: bool
+    param: Optional[bool]
+
+
 class Tensor:
     def __init__(
-        self, array: ArrayLike, requires_grad=False, precision=np.float32, _op=""
+        self,
+        array: ArrayLike,
+        requires_grad=False,
+        precision=np.float32,
+        _op="",
+        label=None,
     ):
         self.requires_grad = requires_grad
         # only for gradient calculation
@@ -30,6 +45,22 @@ class Tensor:
         self._grad: npt.ArrayLike | None = None
         self._op = _op
         self._nodes_edges: set = set()  # "copy" of the parents
+        if self.dim == 0:
+            self.label = str(self.data)
+        else:
+            if not label:
+                self.label = "X"
+            else:
+                self.param = True
+                self.label = label
+
+        self._node_info = Node(
+            label=self.label,
+            op=self._op,
+            shape=self.shape,
+            grad=self.requires_grad,
+            param=None,
+        )
 
     @property
     def grad(self):
@@ -92,47 +123,18 @@ class Tensor:
                     prev_node._grad += grad_delta
             node.parents = []
 
-    def _trace(self):
-        nodes, edges = set(), set()
-
-        def build(v):
-            if v not in nodes:
-                nodes.add(v)
-                for child in v._nodes_edges:
-                    edges.add((child, v))
-                    build(child)  # recursive
-
-        build(self)
-        return nodes, edges
-
-    def get_graph(self):
-        dot = graphviz.Digraph(graph_attr={"rankdir": "LR"})
-
-        nodes, edges = self._trace()
-        for n in nodes:
-            uid = str(id(n))
-            if n.requires_grad:
-                has_grad = "grad enabled"
-                n_name = n.__class__.__name__
-            else:
-                has_grad = "constant"
-
-                n_name = n.__class__.__name__
-                if n.shape == ():
-                    n_name = str(n.data)
-            dot.node(
-                name=uid,
-                label=f"{{ {n_name} | {{ shape {n.shape} | {has_grad} }} }}",
-                shape="record",
-            )
-            if n._op:
-                dot.node(name=uid + n._op, label=n._op)
-                dot.edge(uid + n._op, uid)
-
-        for n1, n2 in edges:
-            dot.edge(str(id(n1)), str(id(n2)) + n2._op)
-
-        return dot
+    def _update_node_info(self, result: "Tensor", other: Optional["Tensor"] = None):
+        """Helper function to update _node_info after an operation."""
+        result._node_info = Node(
+            label=result.label,
+            op=result._op,
+            shape=result.shape,
+            grad=result.requires_grad,
+            param=None,
+        )
+        if other is not None:  # Binary operation
+            result._node_info.param = True
+            self._node_info.param = True
 
     def __add__(self, other: TensorLike) -> "Tensor":
         other = _to_var(other)
@@ -147,18 +149,20 @@ class Tensor:
             # Pass arrays to the external gradient function.
 
             def _calc_grad_add_self(x):
-                return grad_add(x, self.data, other.data)
+                return grad_add(x, self.data)
 
             result.parents.add((self, _calc_grad_add_self))
         if other.requires_grad:
 
             def _calc_grad_add_other(x):
-                return grad_add(x, other.data, self.data)
+                return grad_add(x, other.data)
 
             result.parents.add((other, _calc_grad_add_other))
 
         result._nodes_edges.add(self)
         result._nodes_edges.add(other)
+        self._update_node_info(result, other) # Update after operation
+        # print(f"{result.shape} = {result._op}({self.shape}, {other.shape}")
         return result
 
     def __radd__(self, other: TensorLike) -> "Tensor":
@@ -194,6 +198,7 @@ class Tensor:
 
         result._nodes_edges.add(self)
         result._nodes_edges.add(other)
+        # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
         return result
 
     def __rmul__(self, other: TensorLike) -> "Tensor":
@@ -228,6 +233,7 @@ class Tensor:
             result.parents.add((other, _calc_grad_matmul_other))
         result._nodes_edges.add(self)
         result._nodes_edges.add(other)
+        # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
         return result
 
     def __rmatmul__(self, other: TensorLike) -> "Tensor":
@@ -259,6 +265,7 @@ class Tensor:
             result.parents.add((exponent, _calc_grad_pow_other))
         result._nodes_edges.add(self)
         result._nodes_edges.add(exponent)
+        # print(f"{result.shape} = {result._op}({self.label}, {exponent.label})")
         return result
 
     @property
@@ -273,6 +280,7 @@ class Tensor:
 
             result.parents.add((self, _calc_grad_transpose))
         result._nodes_edges.add(self)
+        # print(f"{result.shape} = {result._op}({self.shape}")
         return result
 
     def sqrt(self) -> "Tensor":
@@ -286,6 +294,7 @@ class Tensor:
 
             result.parents.add((self, _calc_grad_sqrt))
         result._nodes_edges.add(self)
+        # print(f"{result.shape} = {result._op}({self.shape}")
         return result
 
     def sum(self, axis=None, keepdims=False) -> "Tensor":
@@ -300,6 +309,7 @@ class Tensor:
             result.parents.add((self, _grad_sum))
 
         result._nodes_edges.add(self)
+        # print(f"{result.shape} = {result._op}({self.shape})")
         return result
 
 
@@ -315,12 +325,94 @@ def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
     return sum_axes
 
 
+def trace_forward(root: Tensor):
+    nodes, edges = set(), set()
+
+    def build(v):
+        if v not in nodes:
+            nodes.add(v)
+            for child in v._nodes_edges:
+                edges.add((child, v))
+                build(child)  # recursive
+
+    build(root)
+    return nodes, edges
+
+
+def get_label(node):
+    if not node.label:
+        if node.requires_grad:
+            return "x"
+        else:
+            if node.dim == 0:
+                return str(node.data)
+            else:
+                return str(node.shape)
+    else:
+        return node.label
+
+
+def get_formula(root: Tensor):
+    visited = set()
+    op_list = []
+
+    def build(v: Tensor):
+        if v not in visited:
+            visited.add(v)
+
+            if v._op:
+                inputs_str = ", ".join(
+                    f"{get_label(child)}" for child in v._nodes_edges
+                )
+                shapes_str = " x ".join(f"{child.shape}" for child in v._nodes_edges)
+                op_list.append(
+                    (f"{get_label(v)} = {v._op}({inputs_str}) \t\t {shapes_str}")
+                )
+
+            for child in v._nodes_edges:
+                build(child)
+
+    build(root)
+
+    return op_list
+
+
+def get_graph(root: Tensor):
+    dot = graphviz.Digraph(graph_attr={"rankdir": "LR"})
+
+    nodes, edges = trace_forward(root)
+    for n in nodes:
+        uid = str(id(n))
+        if n.requires_grad:
+            has_grad = "grad enabled"
+            n_name = n.__class__.__name__
+        else:
+            has_grad = "constant"
+
+            n_name = n.__class__.__name__
+            if n.shape == ():
+                n_name = str(n.data)
+        dot.node(
+            name=uid,
+            label=f"{{ {n_name} | {{ shape {n.shape} | {has_grad} }} }}",
+            shape="record",
+        )
+        if n._op:
+            dot.node(name=uid + n._op, label=n._op)
+            dot.edge(uid + n._op, uid)
+
+    for n1, n2 in edges:
+        dot.edge(str(id(n1)), str(id(n2)) + n2._op)
+
+    return dot
+
+
 # --- Gradient Functions (External, NumPy-based) ---
 
 
 # passed
 # @check_numpy_arrays
-def grad_add(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+def grad_add(_data: np.ndarray, arr1: np.ndarray) -> np.ndarray:
     sum_axes = get_axes_broadcasting(_data, arr1)
     return tensor_sum(_data, axis=tuple(sum_axes), keepdims=True)
 
