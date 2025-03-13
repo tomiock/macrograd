@@ -44,6 +44,8 @@ def analyze_function(target_function_name, processing_func):
 
                 original_decorators = func_def.decorator_list
                 func_def.decorator_list = []
+                # we remove the decorators from the functions
+                # when the modified functions is called, the decorator is not executed
 
                 class FunctionAnalyzer(ast.NodeVisitor):
                     def __init__(self):
@@ -65,7 +67,7 @@ def analyze_function(target_function_name, processing_func):
                                     first_arg = node.args[0]
                                     try:
                                         if isinstance(first_arg, ast.Name):
-                                            # --- Simplified Access (Now Possible) ---
+                                            # this branch should be executed
                                             if first_arg.id in captured_locals:
                                                 self.first_arg_value = captured_locals[
                                                     first_arg.id
@@ -84,7 +86,7 @@ def analyze_function(target_function_name, processing_func):
                                         elif isinstance(first_arg, ast.Constant):
                                             self.first_arg_value = (
                                                 first_arg.value
-                                            )  # Works
+                                            )
                                     except Exception as e:
                                         print(
                                             f"Decorator: Error during argument evaluation: {e}"
@@ -105,7 +107,7 @@ def analyze_function(target_function_name, processing_func):
 
                 # --- 2. Prepare Execution Context ---
                 global_vars = func.__globals__.copy()
-                local_vars = {}  # Will be populated by capture_locals
+                local_vars = {}
 
                 signature = inspect.signature(func)
                 bound_args = signature.bind(*args, **kwargs)
@@ -134,37 +136,38 @@ def analyze_function(target_function_name, processing_func):
                                     args=[ast.Constant(value=target.id), node.value],
                                     keywords=[],
                                 )
-                                # Assign the result of capture_locals back to the variable
                                 new_assign = ast.Assign(
                                     targets=[target], value=capture_call
                                 )
                                 new_nodes.append(new_assign)
                             else:
-                                new_nodes.append(node)  # Keep original node
+                                new_nodes.append(node)
                         return new_nodes
 
                 injector = InjectCapture()
                 modified_tree = injector.visit(modified_tree)
                 modified_tree = ast.fix_missing_locations(
                     modified_tree
-                )  # Very important!
+                )
 
                 # --- 3. Compile and Execute ---
                 compiled_code = compile(modified_tree, "<string>", "exec")
-
                 exec(compiled_code, global_vars, local_vars)
 
                 # --- 4. Call the Modified Function ---
                 modified_func = local_vars[func.__name__]
+                # we remove the function name from the local vars
+                # only the arguments to the decorated function should be in there
                 local_vars.pop(func.__name__)
                 result = modified_func(**local_vars)
 
                 # --- 5. Analyze and Process ---
-                func_def.decorator_list = original_decorators  # Restore decorators
                 analyzer = FunctionAnalyzer()
-                analyzer.visit(modified_tree)  # Analyze the modified tree
-
+                analyzer.visit(modified_tree) # we analyze the tree to intercept
+                # the variable that we want
+                
                 if analyzer.first_arg_value is not None:
+                    # the found variable is used
                     value = processing_func(analyzer.first_arg_value)
                     value.reverse()
                     print("here there is the forward pass definition:")
