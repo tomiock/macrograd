@@ -1,5 +1,6 @@
 import numpy as np
 
+from . import e
 from .tensor import Tensor, _to_var
 from .tensor import get_axes_broadcasting
 
@@ -35,7 +36,7 @@ def cos(A: Tensor):
 
 
 def ln(A: Tensor):
-    result = Tensor(np.log(A.data), _op='ln')
+    result = Tensor(np.log(A.data), _op="ln")
     result.requires_grad = A.requires_grad
 
     if A.requires_grad:
@@ -50,7 +51,7 @@ def ln(A: Tensor):
 
 
 def log2(A: Tensor):
-    result = Tensor(np.log2(A.data), _op='log2')
+    result = Tensor(np.log2(A.data), _op="log2")
     result.requires_grad = A.requires_grad
 
     if A.requires_grad:
@@ -61,7 +62,7 @@ def log2(A: Tensor):
         result.parents.add((A, _grad_a))
 
     result._nodes_edges.add(A)
-    #print(f"{result.shape} = {result._op}({A.label})")
+    # print(f"{result.shape} = {result._op}({A.label})")
     return result
 
 
@@ -128,7 +129,7 @@ def BCE(x: Tensor, y: Tensor) -> Tensor:
 
 def sigmoid(A: Tensor):
     A = _to_var(A)
-    result = Tensor(1.0 / (1.0 + np.exp(-A.data)), _op='sigmoid')
+    result = Tensor(1.0 / (1.0 + np.exp(-A.data)), _op="sigmoid")
     result.requires_grad = A.requires_grad
 
     if result.requires_grad:
@@ -145,7 +146,7 @@ def sigmoid(A: Tensor):
 
 def relu(A: Tensor):
     A = _to_var(A)
-    result = Tensor(np.maximum(0, A.data), _op='relu')
+    result = Tensor(np.maximum(0, A.data), _op="relu")
     result.requires_grad = A.requires_grad
 
     if result.requires_grad:
@@ -157,26 +158,13 @@ def relu(A: Tensor):
         result.parents.add((A, _grad_relu))
 
     result._nodes_edges.add(A)
-    #print(f"{result.shape} = {result._op}({A.label})")
     return result
 
 
-def softmax(x: Tensor) -> Tensor:
-    x = _to_var(x)
+def cross_entropy(y_true, y_pred):
+    return -1 * (y_true * log2(y_pred)).sum() / y_true.data.shape[0]
 
-    # --- Forward Pass ---
-    x_shifted = x.data - np.max(x.data, axis=-1, keepdims=True)  # Subtract max for stability
-    exp_x = np.exp(x_shifted)
-    sum_exp_x = np.sum(exp_x, axis=-1, keepdims=True)
-    result__data = exp_x / sum_exp_x
-    result = Tensor(result__data, requires_grad=x.requires_grad)
 
-    if x.requires_grad:
-        def _grad_x(incoming_grad):
-            # Combine "subtract max" and gradient calculation
-            # This is the key optimization
-            return (incoming_grad - np.sum(incoming_grad * result.data, axis=-1, keepdims=True)) * result.data
-
-        result.parents.add((x, _grad_x))
-
-    return result
+def softmax(x: Tensor):
+    e_x = e**x
+    return e_x / (e_x.sum(axis=1, keepdims=True))

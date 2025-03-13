@@ -1,26 +1,15 @@
 import numpy as np
 from tqdm import tqdm
 
-from macrograd.model import Model, Linear, SGD_MomentumOptimizer
-from macrograd.functions import relu, log2
-from macrograd import Tensor, e
+from macrograd.model import Model, Linear
+from macrograd.optimizers import SGD_Momentum
+from macrograd.functions import relu, softmax, cross_entropy
+from macrograd import Tensor
 
 import torchvision
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-
-from macrograd.tensor import get_formula, get_graph
-from macrograd.ast import analyze_function
-
-
-def cross_entropy(y_true, y_pred):
-    return -1 * (y_true * log2(y_pred)).sum() / y_true.data.shape[0]
-
-
-def softmax(x: Tensor):
-    e_x = e**x
-    return e_x / (e_x.sum(axis=1, keepdims=True))
 
 
 class MNIST_dataset(Dataset):
@@ -64,7 +53,7 @@ def create_minibatches(dataset, batch_size):
     np.random.shuffle(indices)  # Shuffle the data
     minibatches = []
 
-    for i in range(0, 2000, batch_size):
+    for i in range(0, num_samples, batch_size):
         batch_indices = indices[i : i + batch_size]
         batch_images = dataset.images[batch_indices]
         batch_labels = dataset.labels[batch_indices]
@@ -127,20 +116,18 @@ class MNIST_model(Model):
         return data
 
 
-loss = Tensor(0, requires_grad=True)
 model = MNIST_model(784, 10)
 
 parameters = model.init_params()
 
 epochs = 1
-learning_rate = 0.001
-optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=parameters)
+learning_rate = 0.01
+optimizer = SGD_Momentum(learning_rate, alpha=0.9, params_copy=parameters)
 
 loss_history = []
 batch_loss_history = []
 
 
-#@analyze_function("optimizer.step", get_formula)
 def train_run(parameters):
     for epoch in range(epochs):
         epoch_losses = []
@@ -151,7 +138,6 @@ def train_run(parameters):
 
             loss = cross_entropy(y_batch, y_pred)
 
-            loss._grad = 3.14
             parameters = optimizer.step(loss, parameters)
 
             epoch_losses.append(loss.data)
@@ -164,5 +150,5 @@ def train_run(parameters):
 
 result1 = train_run(parameters)
 
-test_accuracy = evaluate_model(model, test_minibatches)
-print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
+validation_accuracy = evaluate_model(model, test_minibatches)
+print(f"Validation Accuracy: {validation_accuracy * 100:.2f}%")
