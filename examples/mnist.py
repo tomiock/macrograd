@@ -1,8 +1,10 @@
+import mlflow
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from macrograd.model import Model, Linear
-from macrograd.optimizers import SGD_Momentum
+from macrograd.optimizers import LinearScheduler, SGD_Momentum, StepScheduler
 from macrograd.functions import relu, softmax, cross_entropy
 from macrograd import Tensor
 
@@ -47,8 +49,9 @@ class MNIST_dataset(Dataset):
             self.labels[idx] = label
 
 
-def create_minibatches(dataset, batch_size):
-    num_samples = len(dataset)
+def create_minibatches(dataset, batch_size, num_samples=None):
+    if not num_samples:
+        num_samples = len(dataset)
     indices = np.arange(num_samples)
     np.random.shuffle(indices)  # Shuffle the data
     minibatches = []
@@ -87,7 +90,8 @@ train_dataset = MNIST_dataset(train_set, partition="train")
 test_dataset = MNIST_dataset(test_set, partition="test")
 
 batch_size = 10
-train_minibatches = create_minibatches(train_dataset, batch_size)
+num_samples = None
+train_minibatches = create_minibatches(train_dataset, batch_size, num_samples=num_samples)
 test_minibatches = create_minibatches(test_dataset, batch_size)
 
 
@@ -115,22 +119,37 @@ class MNIST_model(Model):
 
         return data
 
+mlflow.set_tracking_uri("http://atenea:5000")
 
 model = MNIST_model(784, 10)
 
 parameters = model.init_params()
 
-epochs = 1
-learning_rate = 0.01
-optimizer = SGD_Momentum(learning_rate, alpha=0.9, params_copy=parameters)
+epochs = 10
+learning_rate = 0.02
+optimizer = SGD_Momentum(parameters, learning_rate, alpha=0.8)
+#scheduler = LinearScheduler(total_iter=8, target_lr=.0001)
+
+hyper_params = {
+    "epochs": epochs,
+    "learning_rate": learning_rate,
+    "momentum": .8,
+    "batch_size": batch_size,
+    "number_samples": num_samples,
+    "optimizer": optimizer.__class__.__name__,
+    "scheduler": None,
+}
 
 loss_history = []
 batch_loss_history = []
+lr_history = []
 
+mlflow.set_experiment("mnist-macrograd")
 
 def train_run(parameters):
     for epoch in range(epochs):
         epoch_losses = []
+
         for X_batch, y_batch in tqdm(
             train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"
         ):
@@ -143,12 +162,18 @@ def train_run(parameters):
             epoch_losses.append(loss.data)
             batch_loss_history.append(loss.data)
 
-        epoch_loss_mean = np.mean(epoch_losses)
-        loss_history.append(epoch_loss_mean)
+        epoch_loss_mean = float(np.mean(epoch_losses))
+        mlflow.log_metric("train_loss", epoch_loss_mean, step=epoch)
+
+        #scheduler.step(optimizer)
+        mlflow.log_metric("learning_rate", optimizer.lr, step=epoch)
     return parameters
 
 
-result1 = train_run(parameters)
+with mlflow.start_run() as run:
+    mlflow.log_params(hyper_params)
+    result1 = train_run(parameters)
 
-validation_accuracy = evaluate_model(model, test_minibatches)
-print(f"Validation Accuracy: {validation_accuracy * 100:.2f}%")
+    validation_accuracy = evaluate_model(model, test_minibatches)
+    mlflow.log_metric("val accuracy", validation_accuracy)
+    print(f"Validation Accuracy: {validation_accuracy * 100:.2f}%")

@@ -62,6 +62,7 @@ EOF
                         pythonPackages.torch
                         pythonPackages.torchvision
                         pythonPackages.pytest
+                        pythonPackages.mlflow
                         pythonPackages.autograd
                         pythonPackages.graphviz
                         pythonPackages.pandas

@@ -1,6 +1,87 @@
 import numpy as np
+import warnings
 
 from . import Tensor
+
+
+class LinearScheduler:
+    def __init__(self, total_iter, target_lr):
+        self.total_iter = total_iter
+        self.target_lr = target_lr
+
+        self.step_count = 0
+
+    def step(self, optimizer):
+        try:
+            assert isinstance(optimizer.lr, float)
+        except NameError or TypeError or AssertionError:
+            raise Exception("Provide a valid optimizer or learning rate")
+        lr = optimizer.lr
+
+        new_lr = self.get_lr(self.step_count, self.total_iter, lr, self.target_lr)
+        optimizer.lr = new_lr
+
+        self.step_count += 1
+        return optimizer
+
+    def get_lr(self, current_epoch, final_epoch, learning_rate, final_learning_rate):
+        if current_epoch < final_epoch:
+            alpha = current_epoch / final_epoch
+            return (1 - alpha) * learning_rate + alpha * final_learning_rate
+        else:
+            return final_learning_rate
+
+
+class ExponentailScheduler:
+    def __init__(self, decay_factor, decay_rate):
+        self.decay_factor = decay_factor
+        self.decay_rate = decay_rate
+        self.step_count = 0
+
+    def step(self, optimizer):
+        try:
+            assert isinstance(optimizer.lr, float)
+        except NameError or TypeError or AssertionError:
+            raise Exception("Provide a valid optimizer or learning rate")
+
+        raise NotImplementedError
+
+
+class StepScheduler:
+    def __init__(self, decay_factor: float, decay_rate=2):
+        self.decay_factor = decay_factor
+        self.decay_rate = decay_rate
+        self.step_count = 0
+        warnings.warn(
+            "The learning rate eventually would be zero, set the decay rate carefully"
+        )
+
+    def step(self, optimizer):
+        try:
+            assert isinstance(optimizer.lr, float)
+        except NameError or TypeError or AssertionError:
+            raise Exception("Provide a valid optimizer or learning rate")
+
+        lr = optimizer.lr
+        optimizer.lr = self.get_lr(self.step_count, lr)
+
+        self.step_count += 1
+        return optimizer
+
+    # WARNING: the lr eventually would be zero
+    def get_lr(self, current_epoch, learning_rate):
+        if not current_epoch % self.decay_rate:
+            return learning_rate * self.decay_factor
+        else:
+            return learning_rate
+
+
+class ReduceLROnPlateau:
+    def __init__(self, optimizer):
+        pass
+
+    def step(self, learning_rate: float, metric_history: list):
+        pass
 
 
 class SGD:
@@ -36,7 +117,10 @@ class SGD:
 
 class SGD_Momentum:
     def __init__(
-        self, learning_rate: float = 0.01, alpha: float = 0.9, params_copy: list = []
+        self,
+        params_copy: list,
+        learning_rate: float = 0.01,
+        alpha: float = 0.9,
     ):
         self.lr = learning_rate
         self.velocities = []

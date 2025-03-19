@@ -161,7 +161,7 @@ class Tensor:
 
         result._nodes_edges.add(self)
         result._nodes_edges.add(other)
-        self._update_node_info(result, other) # Update after operation
+        self._update_node_info(result, other)  # Update after operation
         # print(f"{result.shape} = {result._op}({self.shape}, {other.shape}")
         return result
 
@@ -313,7 +313,6 @@ class Tensor:
         return result
 
 
-# @check_numpy_arrays
 def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
     sum_axes = []
     for i in range(len(_data.shape)):
@@ -410,21 +409,16 @@ def get_graph(root: Tensor):
 # --- Gradient Functions (External, NumPy-based) ---
 
 
-# passed
-# @check_numpy_arrays
 def grad_add(_data: np.ndarray, arr1: np.ndarray) -> np.ndarray:
     sum_axes = get_axes_broadcasting(_data, arr1)
     return tensor_sum(_data, axis=tuple(sum_axes), keepdims=True)
 
 
-# passed
-# @check_numpy_arrays
 def grad_mul(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     sum_axes = get_axes_broadcasting(_data, arr1)
     return tensor_sum(tensor_mul(_data, arr2), axis=tuple(sum_axes), keepdims=True)
 
 
-# @check_numpy_arrays
 def grad_matmul(
     _data: np.ndarray,
     arr1: np.ndarray,
@@ -437,7 +431,6 @@ def grad_matmul(
         return tensor_matmul(tensor_transpose(arr1), _data)
 
 
-# @check_numpy_arrays
 def grad_pow(
     _data: np.ndarray,
     arr: np.ndarray,
@@ -458,9 +451,6 @@ def grad_pow(
         )
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def grad_sqrt(_data: np.ndarray, arr: np.ndarray) -> np.ndarray:
     return tensor_mul(_data, (0.5 / tensor_sqrt(arr)))
 
@@ -476,93 +466,58 @@ def grad_sum(_data: np.ndarray, arr: np.ndarray, axis, keepdims) -> np.ndarray:
         return tensor_mul(_data, tensor_ones_like(arr))
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def grad_transpose(_data: np.ndarray) -> np.ndarray:
     return _data.T
 
 
 # --- NumPy-based functions ---
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_sqrt(arr: np.ndarray) -> np.ndarray:
     return np.sqrt(arr)
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_transpose(arr: np.ndarray) -> np.ndarray:
     return arr.T
 
 
-# passed
-# @check_numpy_arrays
 def tensor_matmul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     return np.dot(arr1, arr2)
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_add(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     return arr1 + arr2
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_mul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     return arr1 * arr2
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_pow(arr: np.ndarray, exponent: np.ndarray) -> np.ndarray:
     return np.power(arr, exponent)
 
 
-# fuck u
-# @check_numpy_arrays
 def tensor_sum(arr: np.ndarray, axis=None, keepdims=False) -> np.ndarray:
     return np.sum(arr, axis=axis, keepdims=keepdims)
 
 
-# @check_numpy_arrays
 def tensor_reshape(arr: np.ndarray, shape) -> np.ndarray:
     return arr.reshape(shape)
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_zeros_like(arr: np.ndarray) -> np.ndarray:
     return np.zeros_like(arr)
 
 
-# @check_numpy_arrays
 def tensor_zeros(shape: tuple) -> np.ndarray:
     return np.zeros(shape)
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_ones_like(arr: np.ndarray) -> np.ndarray:
     return np.ones_like(arr)
 
 
-# passed
-# @check_numpy_arrays
-@nb.njit
 def tensor_expand_dims(arr: np.ndarray, axis) -> np.ndarray:
     return np.expand_dims(arr, axis)
 
 
-# @check_numpy_arrays
-@nb.njit
 def tensor_log(arr: np.ndarray) -> np.ndarray:
     return np.log(arr)
