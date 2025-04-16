@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from typing import Optional, Hashable, Any
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
+from typing import Any, Hashable, Optional
 
 import numpy as np
+
+from macrograd.utils_shape import (
+    _calc_broadcast_shape,
+    _calc_matmul_shape,
+    _calc_reduction_shape,
+    _get_list_shape,
+)
 
 
 class FastEnum(IntEnum):
@@ -60,12 +67,13 @@ class Node:
     id: Hashable
     op: Optional[Ops] = None
     inputs: tuple[Hashable, ...] = field(default_factory=tuple)
-    succesors: set[Hashable] = field(default_factory=set)
-    data: Any = None
-    device: str = "cpu"
+    successors: set[Hashable] = field(default_factory=set)
     shape: Optional[tuple[int, ...]] = None
     dtype: Optional[Type] = None
-    static_data = None
+    device: str = "cpu"
+    computed_tensor: Optional[np.ndarray] = None
+
+    op_kwargs: dict[str, Any] = field(default_factory=dict)
 
     # TODO: handle static_data
 
@@ -80,14 +88,14 @@ class Node:
     def __repr__(self) -> str:
         op_name = self.op.name if self.op else "const"
         input_ids = ", ".join(map(repr, self.inputs))
-        successor_ids = ", ".join(map(repr, self.succesors))
+        successor_ids = ", ".join(map(repr, self.successors))
 
         return (
             f"{self.__class__.__name__}("
             f"id={self.id!r}, op={op_name}, "
             f"inputs=({input_ids}), "
             f"successors={{{successor_ids}}}, "
-            f"data={self.data!r}), "
+            f"data={self.computed_tensor!r}), "
             f"shape={self.shape!r})"
         )
 
@@ -111,92 +119,6 @@ def set_default_graph(graph: Optional[Graph]):
     _DEFAULT_GRAPH = graph
 
 
-def get_list_shape(data: Any) -> tuple[int, ...]:
-    if not isinstance(data, list):
-        if not isinstance(data, (int, float)):
-            raise TypeError(f"Invalid type given: {type(data)}")
-        return ()
-
-    if not data:
-        return (0,)
-
-    try:
-        first_element_shape = get_list_shape(data[0])
-    except (ValueError, TypeError) as e:
-        raise type(e)(f"Error processing element at index 0: {e}") from e
-
-    for i, element in enumerate(data[1:], start=1):
-        try:
-            element_shape = get_list_shape(element)
-            if element_shape != first_element_shape:
-                raise ValueError(
-                    f"Inconsistent shape: Element at index 0 implies sub-shape {first_element_shape}, "
-                    f"but element at index {i} has sub-shape {element_shape}."
-                )
-        except (ValueError, TypeError) as e:
-            raise type(e)(f"Error processing element at index {i}: {e}") from e
-    return (len(data),) + first_element_shape
-
-
-def calc_broadcast_shape(
-    shape1: tuple[int, ...], shape2: tuple[int, ...]
-) -> tuple[int, ...]:
-    if shape1 == shape2:
-        return shape1
-
-    len1 = len(shape1)
-    len2 = len(shape2)
-    max_len = max(len1, len2)
-
-    result_shape_reversed = []
-
-    for i in range(1, max_len + 1):
-        dim1 = shape1[-i] if i <= len1 else 1
-        dim2 = shape2[-i] if i <= len2 else 1
-
-        if dim1 == dim2:
-            result_shape_reversed.append(dim1)
-        elif dim1 == 1:
-            result_shape_reversed.append(dim2)
-        elif dim2 == 1:
-            result_shape_reversed.append(dim1)
-        else:
-            raise ValueError
-
-    return tuple(result_shape_reversed[::-1])
-
-
-def calc_matmul_shape(
-    shape1: tuple[int, ...], shape2: tuple[int, ...]
-) -> tuple[int, ...]:
-    ndim1 = len(shape1)
-    ndim2 = len(shape2)
-    if ndim1 == 2 and ndim2 == 2:
-        # (m, k) * (k, n) -> (m, n)
-        if shape1[1] != shape2[0]:
-            raise ValueError
-        return (shape1[0], shape2[1])
-
-    elif ndim1 == 1 and ndim2 == 1:
-        # (k,) * (k,) -> float
-        if shape1[0] != shape2[0]:
-            raise ValueError
-        return ()
-
-    elif ndim1 == 2 and ndim2 == 1:
-        # (m, k) * (k,) -> (m,)
-        if shape1[1] != shape2[0]:
-            raise ValueError
-        return (shape1[0],)
-
-    elif ndim1 == 1 and ndim2 == 2:
-        # (k,) * (k,n) -> (n,)
-        if shape1[0] != shape2[0]:
-            raise ValueError
-        return (shape2[1],)
-    raise ValueError
-
-
 class Graph:
     def __init__(self):
         # the order here is the order of creation
@@ -218,6 +140,7 @@ class Graph:
         input_ids: tuple[Hashable, ...],
         # supported: float, int, list, ndarray
         static_data: Any = None,
+        kwargs: Optional[dict[str, Any]] = None,
     ) -> Hashable:
         new_id = self._get_next_id(op.name)
 
@@ -226,24 +149,27 @@ class Graph:
         inf_shape = None
         inf_dtype = None
 
+        if kwargs is None:
+            kwargs = defaultdict()
+
         if op == Ops.CONST:
             if isinstance(static_data, np.ndarray):
                 inf_shape = static_data.shape
                 inf_dtype = dtype2tensor_type(static_data.dtype)
             elif isinstance(static_data, (list, int, float)):
-                inf_shape = get_list_shape(static_data)
+                inf_shape = _get_list_shape(static_data)
                 inf_dtype = Type.FLOAT32  # TODO: not hardcoded
             else:
-                raise ValueError(f"unsuported type for data given: {type(static_data)}")
+                raise ValueError(f"Unsuported type for data given: {type(static_data)}")
 
         elif op == Ops.ADD or op == Ops.MUL:
             shape0 = self.nodes[input_ids[0]].shape
             shape1 = self.nodes[input_ids[1]].shape
             if shape1 is None or shape0 is None:
-                raise ValueError
+                raise ValueError("Could not found shape of previous tensor")
 
             try:
-                inf_shape = calc_broadcast_shape(shape0, shape1)
+                inf_shape = _calc_broadcast_shape(shape0, shape1)
             except ValueError:
                 raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
 
@@ -251,11 +177,11 @@ class Graph:
             shape0 = self.nodes[input_ids[0]].shape
             shape1 = self.nodes[input_ids[1]].shape
             if shape1 is None or shape0 is None:
-                raise ValueError
+                raise ValueError("Could not found shape of previous tensor")
 
             try:
                 # TODO: support batched operations
-                inf_shape = calc_matmul_shape(shape0, shape1)
+                inf_shape = _calc_matmul_shape(shape0, shape1)
             except ValueError:
                 raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
 
@@ -266,7 +192,7 @@ class Graph:
             # applied element wise into the base tensor
             inf_shape = shape_base
             if shape_exp is None:
-                raise ValueError
+                raise ValueError("Exponent has no shape")
 
             for dim_size in shape_exp:
                 if dim_size != 1:
@@ -274,16 +200,33 @@ class Graph:
                         f"Exponent tensor has to be scalar-like: {shape_base} shape found"
                     )
 
+        elif op == Ops.SUM:
+            shape_in = self.nodes[input_ids[0]].shape
+            if shape_in is None:
+                raise ValueError(f"Shape for node {input_ids[0]} is None")
+
+            try:
+                axis = kwargs["axis"]
+                keepdims = kwargs["keepdims"]
+                inf_shape = _calc_reduction_shape(shape_in, axis, keepdims)
+            except KeyError:
+                pass
+
         # end shape inference
 
         node = Node(
-            id=new_id, op=op, inputs=input_ids, shape=inf_shape, dtype=inf_dtype
+            id=new_id,
+            op=op,
+            inputs=input_ids,
+            shape=inf_shape,
+            dtype=inf_dtype,
+            op_kwargs=kwargs,
         )
         self.nodes[new_id] = node
 
         for input_id in input_ids:
             if input_id in self.nodes:
-                self.nodes[input_id].succesors.add(new_id)
+                self.nodes[input_id].successors.add(new_id)
 
         return new_id
 
@@ -327,8 +270,8 @@ class Graph:
             op_name = node.op.name if node.op else "const"
             # Create a multi-line label for the node
             label = f"ID: {node.id!r}\nOp: {op_name}\nShape: {node.shape}\nDtype: {node.dtype}"
-            if node.op == Ops.CONST and node.static_data is not None:
-                static_data_repr = repr(node.static_data)
+            if node.op == Ops.CONST and node.computed_tensor is not None:
+                static_data_repr = repr(node.computed_tensor)
                 if len(static_data_repr) > 30:
                     static_data_repr = static_data_repr[:27] + "..."
                 label += f"\nValue: {static_data_repr}"
@@ -366,10 +309,10 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
     in_degree: dict[Hashable, int] = defaultdict(int)
 
     for _, node in graph.items():
-        if not hasattr(node, "succesors") or not isinstance(node.succesors, set):
+        if not hasattr(node, "succesors") or not isinstance(node.successors, set):
             raise AttributeError("Node is missing 'succesors' method")
 
-        for successor_id in node.succesors:
+        for successor_id in node.successors:
             if successor_id not in graph:
                 raise KeyError("node in succesors not found in graph")
             in_degree[successor_id] += 1
@@ -385,7 +328,7 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
 
         node_u = graph[u_id]
 
-        for v_id in node_u.succesors:
+        for v_id in node_u.successors:
             in_degree[v_id] -= 1
 
             if in_degree[v_id] == 0:

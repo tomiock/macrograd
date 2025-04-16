@@ -1,5 +1,6 @@
 from __future__ import annotations  # do not touch
 
+from collections import defaultdict
 from typing import Hashable, Optional
 
 import numpy as np
@@ -102,7 +103,11 @@ class Tensor:
 
     # DONE
     def sum(self, axis=None, keepdims=False) -> Tensor:
-        result_id = self.graph.add_node(Ops.SUM, (self.node_id,))
+        kwargs = dict()
+        kwargs['axis'] = axis
+        kwargs['keepdims'] = keepdims
+
+        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs)
         result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
         return result
 
