@@ -1,12 +1,14 @@
 from macrograd import Tensor
-from macrograd.tensor import Node, Graph
 
-a = Tensor(1)
-b = Tensor(1)
+a = Tensor([1, 1, 1])
+b = Tensor([2, 2, 2])
 
 c = a + b
+d = c / 10
+e = d @ d
+f = e.T
+h = f.sqrt()
+i = h.sum()
+j = i.reshape(1, 1)
 
-d = c * c
-
-print(c)
-print(d)
+d.graph.visualize()
