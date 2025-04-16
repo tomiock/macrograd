@@ -1,11 +1,15 @@
-from dataclasses import dataclass
+from __future__ import annotations  # do not touch
+
+
+from collections import defaultdict
+from dataclasses import dataclass, field
 import graphviz
 from collections.abc import Callable
-from typing import Optional
+from enum import Enum, IntEnum, auto
+from typing import Any, Hashable, Optional
 import numpy as np
 import numpy.typing as npt
-
-import numba as nb
+import uuid
 
 type ArrayLike = int | float | np.ndarray | list | tuple
 type TensorLike = Tensor | int | float | np.ndarray | list
@@ -18,53 +22,165 @@ def _to_var(x: TensorLike) -> "Tensor":
         return Tensor(np.array(x))
 
 
+class FastEnum(IntEnum):
+    def __str__(self):
+        return Enum.__str__(self)
+
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return 1 + max([0, *last_values, *[max(c) for c in FastEnum.__subclasses__()]])
+
+
+class Ops(FastEnum):
+    ADD = auto()
+    MUL = auto()
+    MATMUL = auto()
+    SUM = auto()
+    SQRT = auto()
+    POW = auto()
+    CONV2D = auto()
+    CONV1D = auto()
+    CONST = auto()
+
+
 @dataclass
 class Node:
-    label: str
-    op: str
-    shape: tuple
-    grad: bool
-    param: Optional[bool]
+    id: Hashable
+    op: Optional[Ops] = None
+    inputs: tuple[Hashable, ...] = field(default_factory=tuple)
+    succesors: set[Hashable] = field(default_factory=set)
+    data: Any = None
+    device: str = "cpu"
+    shape: Optional[tuple[int, ...]] = None
+    dtype: Optional[np.dtype] = None
+
+    # TODO: handle static_data
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Node):
+            return self.id == other.id
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        op_name = self.op.name if self.op else "const"
+        input_ids = ", ".join(map(repr, self.inputs))
+        successor_ids = ", ".join(map(repr, self.succesors))
+
+        return (
+            f"{self.__class__.__name__}("
+            f"id={self.id!r}, op={op_name}, "
+            f"inputs=({input_ids}), "
+            f"successors={{{successor_ids}}}, "
+            f"data={self.data!r})"
+        )
+
+
+class Graph:
+    def __init__(self):
+        self.nodes: dict[Hashable, Node] = {}
+        self._op_counters: dict[str, int] = defaultdict(int)
+
+    def _get_next_id(self, op_name: str) -> str:
+        count = self._op_counters[op_name]
+        self._op_counters[op_name] += 1
+        new_id = f"{op_name.lower()}_{count}"
+
+        # TODO: do collision check
+
+        return new_id
+
+    def add_node(
+        self,
+        op: Optional[Ops],
+        input_ids: tuple[Hashable, ...],
+        static_data: Any = None,
+        target_shape: Optional[tuple] = None,
+    ) -> Hashable:
+        op_name_str = op.name if op else "const"
+        new_id = self._get_next_id(op_name_str)
+
+        # TODO: shape inference
+
+        node = Node(id=new_id, op=op, inputs=input_ids, shape=None, dtype=None)
+        self.nodes[new_id] = node
+
+        for input_id in input_ids:
+            if input_id in self.nodes:
+                self.nodes[input_id].succesors.add(new_id)
+
+        return new_id
+
+    def __repr__(self) -> str:
+        return " \n".join(map(repr, self.nodes))
+
+
+_DEFAULT_GRAPH: Optional[Graph] = None
+
+
+def get_default_graph() -> Graph:
+    """Gets the current default graph, creating one if needed."""
+    global _DEFAULT_GRAPH
+    if _DEFAULT_GRAPH is None:
+        # debug
+        print("[Graph] Initializing default graph.")
+        _DEFAULT_GRAPH = Graph()
+    return _DEFAULT_GRAPH
+
+
+def set_default_graph(graph: Optional[Graph]):
+    """Allows explicitly setting or clearing the default graph."""
+    global _DEFAULT_GRAPH
+    _DEFAULT_GRAPH = graph
 
 
 class Tensor:
     def __init__(
         self,
-        array: ArrayLike,
+        array: Optional[ArrayLike] = None,
         requires_grad=False,
         precision=np.float32,
-        _op="",
-        label=None,
+        _node_id: Optional[Hashable] = None,
     ):
+        self.node_id = None
+        self.graph = get_default_graph()
         self.requires_grad = requires_grad
-        # only for gradient calculation
-        self.parents: set[tuple[Tensor, Optional[Callable]]] = set()
         self.data = np.array(array, dtype=precision)
-        self.dim = self.data.ndim
         self.shape = self.data.shape
         self._grad: npt.ArrayLike | None = None
-        self._op = _op
-        self._nodes_edges: set = set()  # "copy" of the parents
-        if self.dim == 0:
-            self.label = str(self.data)
-        else:
-            if not label:
-                self.label = "X"
-            else:
-                self.param = True
-                self.label = label
 
-        self._node_info = Node(
-            label=self.label,
-            op=self._op,
-            shape=self.shape,
-            grad=self.requires_grad,
-            param=None,
-        )
+        if _node_id is not None:
+            self.node_id = _node_id
+        elif array is not None:
+            self.node_id = self.graph.add_node(op=Ops.CONST, input_ids=())
+        else:
+            raise TypeError("must provide data for const or node_id from operation")
 
     @property
     def grad(self):
         return self._grad
+
+    def __add__(self, other: TensorLike) -> "Tensor":
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id))
+        result = Tensor(
+            requires_grad=(self.requires_grad or other.requires_grad),
+            _node_id=result_id,
+        )
+        return result
+
+    def __mul__(self, other: TensorLike) -> "Tensor":
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id))
+        result = Tensor(
+            requires_grad=(self.requires_grad or other.requires_grad),
+            _node_id=result_id,
+        )
+        return result
 
     def zero_grad(self):
         self._grad = tensor_zeros_like(self.data)
@@ -79,92 +195,6 @@ class Tensor:
     def reshape(self, *args):
         return Tensor(tensor_reshape(self.data, args), requires_grad=self.requires_grad)
 
-    def create_stack(self):
-        visited = set()
-        visit_stack = [self]
-        stack = []
-
-        while visit_stack:
-            node = visit_stack[-1]
-            all_parents_visited = True
-            for p_node, _ in node.parents:
-                if p_node not in visited:
-                    all_parents_visited = False
-                    visit_stack.append(p_node)
-                    break
-
-            if all_parents_visited:
-                visit_stack.pop(-1)
-                if node not in visited:
-                    visited.add(node)
-                    stack.append(node)
-        del visited
-        del visit_stack
-
-        return stack
-
-    def _backward(self, _value: np.ndarray = np.array(1.0)):
-        if not self.requires_grad:
-            return
-
-        stack = self.create_stack()
-        self._grad = _value
-
-        for node in reversed(stack):
-            if node.grad is None:
-                continue
-            for prev_node, local_grad_fn in node.parents:
-                if prev_node.requires_grad:
-                    if prev_node._grad is None:
-                        prev_node._grad = tensor_zeros(prev_node.shape)
-                    grad_delta = local_grad_fn(node._grad)
-                    if grad_delta.shape != prev_node._grad.shape:
-                        grad_delta = tensor_reshape(grad_delta, prev_node._grad.shape)
-                    prev_node._grad += grad_delta
-            node.parents = []
-
-    def _update_node_info(self, result: "Tensor", other: Optional["Tensor"] = None):
-        """Helper function to update _node_info after an operation."""
-        result._node_info = Node(
-            label=result.label,
-            op=result._op,
-            shape=result.shape,
-            grad=result.requires_grad,
-            param=None,
-        )
-        if other is not None:  # Binary operation
-            result._node_info.param = True
-            self._node_info.param = True
-
-    def __add__(self, other: TensorLike) -> "Tensor":
-        other = _to_var(other)
-        assert type(other.data) is np.ndarray
-        assert type(self.data) is np.ndarray
-        result = Tensor(
-            tensor_add(self.data, other.data),
-            requires_grad=(self.requires_grad or other.requires_grad),
-            _op="add",
-        )
-        if self.requires_grad:
-            # Pass arrays to the external gradient function.
-
-            def _calc_grad_add_self(x):
-                return grad_add(x, self.data)
-
-            result.parents.add((self, _calc_grad_add_self))
-        if other.requires_grad:
-
-            def _calc_grad_add_other(x):
-                return grad_add(x, other.data)
-
-            result.parents.add((other, _calc_grad_add_other))
-
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(other)
-        self._update_node_info(result, other)  # Update after operation
-        # print(f"{result.shape} = {result._op}({self.shape}, {other.shape}")
-        return result
-
     def __radd__(self, other: TensorLike) -> "Tensor":
         return _to_var(other) + self
 
@@ -173,33 +203,6 @@ class Tensor:
 
     def __rsub__(self, other: TensorLike) -> "Tensor":
         return _to_var(other) + (-self)
-
-    def __mul__(self, other: TensorLike) -> "Tensor":
-        other = _to_var(other)
-        assert type(other.data) is np.ndarray
-        assert type(self.data) is np.ndarray
-        result = Tensor(
-            tensor_mul(self.data, other.data),
-            requires_grad=(self.requires_grad or other.requires_grad),
-            _op="mul",
-        )
-        if self.requires_grad:
-
-            def _calc_grad_mul_self(_value):
-                return grad_mul(_value, self.data, other.data)
-
-            result.parents.add((self, _calc_grad_mul_self))
-        if other.requires_grad:
-
-            def _calc_grad_mul_other(_value):
-                return grad_mul(_value, other.data, self.data)
-
-            result.parents.add((other, _calc_grad_mul_other))
-
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(other)
-        # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
-        return result
 
     def __rmul__(self, other: TensorLike) -> "Tensor":
         return _to_var(other) * self
@@ -233,6 +236,7 @@ class Tensor:
             result.parents.add((other, _calc_grad_matmul_other))
         result._nodes_edges.add(self)
         result._nodes_edges.add(other)
+        self._update_node_info(result, other)
         # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
         return result
 

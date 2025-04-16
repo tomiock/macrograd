@@ -1,17 +1,12 @@
-from numpy import require
 from macrograd import Tensor
-from macrograd.tensor import get_formula, trace_forward, get_graph
+from macrograd.tensor import Node, Graph
 
-def my_function_bias(x, w, b):
-    return (x @ w) + b
- 
-def my_function(x, w):
-    return (x @ w)
+a = Tensor(1)
+b = Tensor(1)
 
-x = Tensor([1, 2], requires_grad=False)
-w = Tensor([2, 1], requires_grad=True)
-b = Tensor([3], requires_grad=True)
+c = a + b
 
-z = my_function_bias(x, w, b)
+d = c * c
 
-get_formula(z)
+print(c)
+print(d)
