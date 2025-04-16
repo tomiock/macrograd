@@ -101,13 +101,7 @@ class Tensor:
         return result
 
     # DONE
-    def sqrt(self) -> "Tensor":
-        result_id = self.graph.add_node(Ops.SQRT, (self.node_id,))
-        result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
-        return result
-
-    # DONE
-    def sum(self, axis=None, keepdims=False) -> "Tensor":
+    def sum(self, axis=None, keepdims=False) -> Tensor:
         result_id = self.graph.add_node(Ops.SUM, (self.node_id,))
         result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
         return result
@@ -127,6 +121,9 @@ class Tensor:
 
     def __repr__(self) -> str:
         return f"{self.data}, grad={self.grad}, shape={self.shape}, rgrad={self.requires_grad}"
+
+    def sqrt(self) -> Tensor:
+        return self ** 0.5
 
     def __radd__(self, other: TensorLike) -> Tensor:
         return _to_var(other) + self
@@ -151,6 +148,7 @@ class Tensor:
 
     def __neg__(self) -> Tensor:
         return self * -1.0
+
 
 def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
     sum_axes = []

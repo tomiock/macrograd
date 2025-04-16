@@ -23,7 +23,6 @@ class Ops(FastEnum):
     MUL = auto()
     MATMUL = auto()
     SUM = auto()
-    SQRT = auto()
     POW = auto()
     CONV2D = auto()
     CONV1D = auto()
@@ -141,7 +140,7 @@ def get_list_shape(data: Any) -> tuple[int, ...]:
 
 def calc_broadcast_shape(
     shape1: tuple[int, ...], shape2: tuple[int, ...]
-) -> tuple[int, ...] | None:
+) -> tuple[int, ...]:
     if shape1 == shape2:
         return shape1
 
@@ -162,9 +161,40 @@ def calc_broadcast_shape(
         elif dim2 == 1:
             result_shape_reversed.append(dim1)
         else:
-            return None  # error
+            raise ValueError
 
     return tuple(result_shape_reversed[::-1])
+
+
+def calc_matmul_shape(
+    shape1: tuple[int, ...], shape2: tuple[int, ...]
+) -> tuple[int, ...]:
+    ndim1 = len(shape1)
+    ndim2 = len(shape2)
+    if ndim1 == 2 and ndim2 == 2:
+        # (m, k) * (k, n) -> (m, n)
+        if shape1[1] != shape2[0]:
+            raise ValueError
+        return (shape1[0], shape2[1])
+
+    elif ndim1 == 1 and ndim2 == 1:
+        # (k,) * (k,) -> float
+        if shape1[0] != shape2[0]:
+            raise ValueError
+        return ()
+
+    elif ndim1 == 2 and ndim2 == 1:
+        # (m, k) * (k,) -> (m,)
+        if shape1[1] != shape2[0]:
+            raise ValueError
+        return (shape1[0],)
+
+    elif ndim1 == 1 and ndim2 == 2:
+        # (k,) * (k,n) -> (n,)
+        if shape1[0] != shape2[0]:
+            raise ValueError
+        return (shape2[1],)
+    raise ValueError
 
 
 class Graph:
@@ -195,29 +225,54 @@ class Graph:
 
         inf_shape = None
         inf_dtype = None
+
         if op == Ops.CONST:
             if isinstance(static_data, np.ndarray):
                 inf_shape = static_data.shape
                 inf_dtype = dtype2tensor_type(static_data.dtype)
             elif isinstance(static_data, (list, int, float)):
                 inf_shape = get_list_shape(static_data)
-                inf_dtype = Type.FLOAT32
+                inf_dtype = Type.FLOAT32  # TODO: not hardcoded
             else:
                 raise ValueError(f"unsuported type for data given: {type(static_data)}")
 
-        elif op == Ops.ADD or Ops.MUL:
-            if len(input_ids) == 1:
-                input_ids = (input_ids[0], input_ids[0])
-            elif len(input_ids) == 2:
-                pass
-            else:
-                raise ValueError(f"Unsuported number of inputs to {op}")
+        elif op == Ops.ADD or op == Ops.MUL:
             shape0 = self.nodes[input_ids[0]].shape
             shape1 = self.nodes[input_ids[1]].shape
+            if shape1 is None or shape0 is None:
+                raise ValueError
 
-            inf_shape = calc_broadcast_shape(shape0, shape1)
-            if inf_shape is None:
+            try:
+                inf_shape = calc_broadcast_shape(shape0, shape1)
+            except ValueError:
                 raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
+
+        elif op == Ops.MATMUL:
+            shape0 = self.nodes[input_ids[0]].shape
+            shape1 = self.nodes[input_ids[1]].shape
+            if shape1 is None or shape0 is None:
+                raise ValueError
+
+            try:
+                # TODO: support batched operations
+                inf_shape = calc_matmul_shape(shape0, shape1)
+            except ValueError:
+                raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
+
+        elif op == Ops.POW:
+            shape_exp = self.nodes[input_ids[1]].shape
+            shape_base = self.nodes[input_ids[0]].shape
+
+            # applied element wise into the base tensor
+            inf_shape = shape_base
+            if shape_exp is None:
+                raise ValueError
+
+            for dim_size in shape_exp:
+                if dim_size != 1:
+                    raise ValueError(
+                        f"Exponent tensor has to be scalar-like: {shape_base} shape found"
+                    )
 
         # end shape inference
 
