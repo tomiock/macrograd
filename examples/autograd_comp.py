@@ -1,4 +1,5 @@
 from macrograd import Tensor
+from macrograd.engine import topo_sort
 
 a = Tensor([1, 1, 1])
 b = Tensor([2, 2, 2])
@@ -10,5 +11,10 @@ f = e.T
 h = f.sqrt()
 i = h.sum()
 j = i.reshape(1, 1)
+k = j + a
 
-d.graph.visualize()
+
+exec_list = topo_sort(j.graph.nodes)
+print(exec_list)
+
+k.graph.visualize()

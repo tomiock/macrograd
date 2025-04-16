@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from typing import Optional, Hashable, Any
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 
@@ -68,6 +70,25 @@ class Node:
             f"successors={{{successor_ids}}}, "
             f"data={self.data!r})"
         )
+
+
+_DEFAULT_GRAPH: Optional[Graph] = None
+
+
+def get_default_graph() -> Graph:
+    """Gets the current default graph, creating one if needed."""
+    global _DEFAULT_GRAPH
+    if _DEFAULT_GRAPH is None:
+        # debug
+        print("[Graph] Initializing default graph.")
+        _DEFAULT_GRAPH = Graph()
+    return _DEFAULT_GRAPH
+
+
+def set_default_graph(graph: Optional[Graph]):
+    """Allows explicitly setting or clearing the default graph."""
+    global _DEFAULT_GRAPH
+    _DEFAULT_GRAPH = graph
 
 
 class Graph:
@@ -180,20 +201,36 @@ class Graph:
             return None
 
 
-_DEFAULT_GRAPH: Optional[Graph] = None
+def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
+    in_degree: dict[Hashable, int] = defaultdict(int)
 
+    for _, node in graph.items():
+        if not hasattr(node, "succesors") or not isinstance(node.succesors, set):
+            raise AttributeError("Node is missing 'succesors' method")
 
-def get_default_graph() -> Graph:
-    """Gets the current default graph, creating one if needed."""
-    global _DEFAULT_GRAPH
-    if _DEFAULT_GRAPH is None:
-        # debug
-        print("[Graph] Initializing default graph.")
-        _DEFAULT_GRAPH = Graph()
-    return _DEFAULT_GRAPH
+        for successor_id in node.succesors:
+            if successor_id not in graph:
+                raise KeyError("node in succesors not found in graph")
+            in_degree[successor_id] += 1
 
+    # initial queue with all nodes that do not have succesors (source nodes)
+    queue = deque([node_id for node_id in graph if in_degree[node_id] == 0])
 
-def set_default_graph(graph: Optional[Graph]):
-    """Allows explicitly setting or clearing the default graph."""
-    global _DEFAULT_GRAPH
-    _DEFAULT_GRAPH = graph
+    result: list[Hashable] = []
+
+    while queue:
+        u_id = queue.popleft()
+        result.append(u_id)
+
+        node_u = graph[u_id]
+
+        for v_id in node_u.succesors:
+            in_degree[v_id] -= 1
+
+            if in_degree[v_id] == 0:
+                queue.append(v_id)
+
+    if len(result) != len(graph):
+        raise ValueError("the graph appears to have cycles, this is not supported")
+
+    return result
