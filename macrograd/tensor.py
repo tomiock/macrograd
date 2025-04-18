@@ -3,6 +3,7 @@ from __future__ import annotations  # do not touch
 from collections import defaultdict
 from typing import Hashable, Optional
 
+import math
 import numpy as np
 import numpy.typing as npt
 
@@ -104,16 +105,31 @@ class Tensor:
     # DONE
     def sum(self, axis=None, keepdims=False) -> Tensor:
         kwargs = dict()
-        kwargs['axis'] = axis
-        kwargs['keepdims'] = keepdims
+        kwargs["axis"] = axis
+        kwargs["keepdims"] = keepdims
 
         result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs)
         result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
         return result
 
     # DONE
-    def reshape(self, *args):
-        result_id = self.graph.add_node(Ops.RESHAPE, (self.node_id,))
+    def exp(self) -> Tensor:
+        result_id = self.graph.add_node(Ops.EXP, (self.node_id,))
+        result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
+        return result
+
+    # DONE
+    def log(self, base: float | str = 'e'):
+        graph = get_default_graph()
+        result_id = graph.add_node(
+            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}
+        )
+        result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
+        return result
+
+    # DONE
+    def reshape(self, shape: int | tuple):
+        result_id = self.graph.add_node(Ops.RESHAPE, (self.node_id,), shape_reshape=shape)
         result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
         return result
 
@@ -128,7 +144,7 @@ class Tensor:
         return f"{self.data}, grad={self.grad}, shape={self.shape}, rgrad={self.requires_grad}"
 
     def sqrt(self) -> Tensor:
-        return self ** 0.5
+        return self**0.5
 
     def __radd__(self, other: TensorLike) -> Tensor:
         return _to_var(other) + self

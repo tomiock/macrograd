@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import prod
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
@@ -30,6 +31,9 @@ class Ops(FastEnum):
     MUL = auto()
     MATMUL = auto()
     SUM = auto()
+    MAX = auto()
+    EXP = auto()
+    LOG = auto()
     POW = auto()
     CONV2D = auto()
     CONV1D = auto()
@@ -43,10 +47,30 @@ class Ops(FastEnum):
 
 
 class Type(FastEnum):
-    INT64 = auto()
-    INT32 = auto()
-    FLOAT64 = auto()
-    FLOAT32 = auto()
+    INT32 = 10
+    INT64 = 20
+    FLOAT32 = 30
+    FLOAT64 = 40
+
+
+def calc_promoted_dtype(dtype1: Type, dtype2: Type) -> Type:
+    promoted_rank = max(dtype2.value, dtype1.value)
+
+    try:
+        return Type(promoted_rank)
+    except ValueError:
+        raise ValueError("Internal Error, did not found corresponding type")
+
+
+def unary_dtype_handle(node_in):
+    if node_in.dtype in (Type.INT32, Type.INT64):
+        inf_dtype = Type.FLOAT32
+    elif node_in.dtype in (Type.FLOAT32, Type.FLOAT64):
+        inf_dtype = node_in.dtype
+    else:
+        raise TypeError
+
+    return inf_dtype
 
 
 def dtype2tensor_type(dtype: np.dtype):
@@ -140,6 +164,7 @@ class Graph:
         input_ids: tuple[Hashable, ...],
         # supported: float, int, list, ndarray
         static_data: Any = None,
+        shape_reshape: Optional[int | tuple] = None,
         kwargs: Optional[dict[str, Any]] = None,
     ) -> Hashable:
         new_id = self._get_next_id(op.name)
@@ -158,32 +183,57 @@ class Graph:
                 inf_dtype = dtype2tensor_type(static_data.dtype)
             elif isinstance(static_data, (list, int, float)):
                 inf_shape = _get_list_shape(static_data)
-                inf_dtype = Type.FLOAT32  # TODO: not hardcoded
+                if isinstance(static_data, float):
+                    inf_dtype = Type.FLOAT32
+                elif isinstance(static_data, int):
+                    inf_dtype = Type.INT32
+                elif isinstance(static_data, list):
+                    inf_dtype = Type.FLOAT32
             else:
-                raise ValueError(f"Unsuported type for data given: {type(static_data)}")
+                raise TypeError(f"Unsuported type for data given: {type(static_data)}")
 
         elif op == Ops.ADD or op == Ops.MUL:
-            shape0 = self.nodes[input_ids[0]].shape
-            shape1 = self.nodes[input_ids[1]].shape
-            if shape1 is None or shape0 is None:
-                raise ValueError("Could not found shape of previous tensor")
+            node0 = self.nodes[input_ids[0]]
+            node1 = self.nodes[input_ids[1]]
+
+            shape0 = node0.shape
+            shape1 = node1.shape
+            type0 = node0.dtype
+            type1 = node1.dtype
+
+            if shape1 is None or shape0 is None or type0 is None or type1 is None:
+                raise ValueError(
+                    f"Could not found metadata for the input tensors for nodes {input_ids}"
+                )
 
             try:
                 inf_shape = _calc_broadcast_shape(shape0, shape1)
             except ValueError:
                 raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
 
+            inf_dtype = calc_promoted_dtype(type0, type1)
+
         elif op == Ops.MATMUL:
-            shape0 = self.nodes[input_ids[0]].shape
-            shape1 = self.nodes[input_ids[1]].shape
-            if shape1 is None or shape0 is None:
-                raise ValueError("Could not found shape of previous tensor")
+            node0 = self.nodes[input_ids[0]]
+            node1 = self.nodes[input_ids[1]]
+
+            shape0 = node0.shape
+            shape1 = node1.shape
+            type0 = node0.dtype
+            type1 = node1.dtype
+
+            if shape1 is None or shape0 is None or type0 is None or type1 is None:
+                raise ValueError(
+                    f"Could not found metadata for the input tensors for nodes {input_ids}"
+                )
 
             try:
                 # TODO: support batched operations
                 inf_shape = _calc_matmul_shape(shape0, shape1)
             except ValueError:
                 raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
+
+            inf_dtype = calc_promoted_dtype(type0, type1)
 
         elif op == Ops.POW:
             shape_exp = self.nodes[input_ids[1]].shape
@@ -200,19 +250,139 @@ class Graph:
                         f"Exponent tensor has to be scalar-like: {shape_base} shape found"
                     )
 
-        elif op == Ops.SUM:
-            shape_in = self.nodes[input_ids[0]].shape
-            if shape_in is None:
+            type1 = self.nodes[input_ids[1]].dtype
+            type0 = self.nodes[input_ids[0]].dtype
+            if type1 is None or type0 is None:
+                raise TypeError(f"Unsuported types in {op}: {type1}, {type0}")
+            try:
+                inf_dtype = calc_promoted_dtype(type0, type1)
+            except TypeError as e:
+                raise e
+
+        elif op == Ops.SUM or op == Ops.MAX:
+            node_in = self.nodes[input_ids[0]]
+
+            if node_in.shape is None:
                 raise ValueError(f"Shape for node {input_ids[0]} is None")
 
             try:
                 axis = kwargs["axis"]
                 keepdims = kwargs["keepdims"]
-                inf_shape = _calc_reduction_shape(shape_in, axis, keepdims)
+                inf_shape = _calc_reduction_shape(node_in.shape, axis, keepdims)
             except KeyError:
                 pass
 
-        # end shape inference
+            try:
+                inf_dtype = unary_dtype_handle(node_in)
+            except TypeError:
+                raise TypeError(f"Unsuported type for {op}: {node_in.dtype}")
+
+        elif op == Ops.EXP:
+            node_in = self.nodes[input_ids[0]]
+            shape_in = node_in.shape
+            if shape_in is None:
+                raise ValueError(f"Shape for node {input_ids[0]} is None")
+            inf_shape = shape_in
+
+            try:
+                inf_dtype = unary_dtype_handle(node_in)
+            except TypeError:
+                raise TypeError(f"Unsuported type for {op}: {node_in.dtype}")
+
+        elif op == Ops.LOG:
+            node_in = self.nodes[input_ids[0]]
+            shape_in = node_in.shape
+
+            if kwargs["base"] is None:
+                raise ValueError("Was not provided `base` to log operation")
+
+            if shape_in is None:
+                raise ValueError(f"Shape for node {input_ids[0]} is None")
+            inf_shape = shape_in
+
+            try:
+                inf_dtype = unary_dtype_handle(node_in)
+            except TypeError:
+                raise TypeError(f"Unsuported type for {op}: {node_in.dtype}")
+
+        elif op == Ops.RESHAPE:
+            node_in = self.nodes[input_ids[0]]
+            shape_in = node_in.shape
+            inf_dtype = node_in.dtype
+
+            if shape_in is None:
+                raise ValueError("Shape of input tensor is none")
+
+            if shape_reshape:
+                new_shape_arg = shape_reshape
+            else:
+                raise ValueError("Required `shape` argument in reshape operation")
+
+            number_elements = prod(shape_in)
+
+            if isinstance(new_shape_arg, int):
+                if (new_shape_arg == number_elements) or (new_shape_arg == -1):
+                    inf_shape = (number_elements,)
+                else:
+                    raise ValueError(
+                        f"Missmatch in shape, tensor with {number_elements} elements cannot be reshape into {(new_shape_arg,)}"
+                    )
+            elif isinstance(new_shape_arg, tuple):
+                product_known_dims = 1
+                unknown_dim_count = 0
+                unknown_dim_index = -1
+
+                for i, dim in enumerate(new_shape_arg):
+                    if not isinstance(dim, int):
+                        raise TypeError(f"Target dim must be `int`, got {type(dim)}")
+
+                    if dim == -1:
+                        unknown_dim_count += 1
+                        unknown_dim_index = i
+                    elif dim < 0:
+                        raise ValueError(
+                            f"Target dim cannot be negative, got {dim} from {new_shape_arg}"
+                        )
+                    else:
+                        if dim == 0 and number_elements != 0:
+                            raise ValueError(
+                                f"Target shape cannot have a zero, got {new_shape_arg}"
+                            )
+                        if dim > 0:
+                            product_known_dims *= dim
+                if unknown_dim_count == 0:
+                    if product_known_dims != number_elements:
+                        if new_shape_arg == () and number_elements == 1:
+                            inf_shape = ()
+                        else:
+                            raise ValueError(
+                                f"Cannot reshape {shape_in} to {new_shape_arg}"
+                            )
+
+                    else:
+                        inf_shape = new_shape_arg
+                elif unknown_dim_count == 1:
+                    if product_known_dims == 0:
+                        if number_elements != 0:
+                            raise ValueError(
+                                f"Cannot reshape {shape_in} to {new_shape_arg}"
+                            )
+                        inf_dim = 0
+                    else:
+                        if number_elements % product_known_dims != 0:
+                            raise ValueError(
+                                f"Cannot reshape {shape_in} to {new_shape_arg}"
+                            )
+                        inf_dim = number_elements // product_known_dims
+
+                    inf_shape_list = list(new_shape_arg)
+                    inf_shape_list[unknown_dim_index] = inf_dim
+                    inf_shape = tuple(inf_shape_list)
+                else:
+                    raise ValueError(
+                        "Only one (-1) in the new_shape pls, got {new_shape_arg}"
+                    )
+        # new shape inference
 
         node = Node(
             id=new_id,
@@ -269,7 +439,12 @@ class Graph:
 
             op_name = node.op.name if node.op else "const"
             # Create a multi-line label for the node
-            label = f"ID: {node.id!r}\nOp: {op_name}\nShape: {node.shape}\nDtype: {node.dtype}"
+
+            if node.op_kwargs:
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nkwargs:\n{node.op_kwargs}"
+            else:
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}"
+
             if node.op == Ops.CONST and node.computed_tensor is not None:
                 static_data_repr = repr(node.computed_tensor)
                 if len(static_data_repr) > 30:
@@ -309,7 +484,7 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
     in_degree: dict[Hashable, int] = defaultdict(int)
 
     for _, node in graph.items():
-        if not hasattr(node, "succesors") or not isinstance(node.successors, set):
+        if not hasattr(node, "successors") or not isinstance(node.successors, set):
             raise AttributeError("Node is missing 'succesors' method")
 
         for successor_id in node.successors:
@@ -335,6 +510,8 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
                 queue.append(v_id)
 
     if len(result) != len(graph):
-        raise ValueError("the graph appears to have cycles, this is not supported")
+        raise ValueError(
+            "the graph appears to have cycles, this is not supported. wtf did you do, no RNNs allowed here."
+        )
 
     return result

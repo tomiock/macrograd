@@ -1,6 +1,5 @@
 import numpy as np
 
-from . import e
 from .tensor import Tensor, _to_var
 from .tensor import get_axes_broadcasting
 
