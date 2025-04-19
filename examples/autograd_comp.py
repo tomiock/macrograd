@@ -10,7 +10,8 @@ a = Tensor([[1, 2, 3, 4], [5, 6, 7, 8]])
 b = softmax(a)
 
 b = b.reshape((-1, 1))
-b = b.sum()
+b = b.T
+b = b.transpose()
 
 a.graph.visualize()
 

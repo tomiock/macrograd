@@ -382,7 +382,52 @@ class Graph:
                     raise ValueError(
                         "Only one (-1) in the new_shape pls, got {new_shape_arg}"
                     )
-        # new shape inference
+        elif op == Ops.TRANSPOSE:
+            node_in = self.nodes[input_ids[0]]
+            shape_in = node_in.shape
+            inf_dtype = node_in.dtype
+
+            if not shape_in:
+                raise ValueError("Shape of input is None")
+
+            ndim = len(shape_in)
+
+            axes = kwargs.get("axes", None)
+
+            if axes is None:
+                axes = tuple(range(ndim))[::-1]
+            else:
+                if not isinstance(axes, (tuple, list)):
+                    raise TypeError(
+                        f"Tranpose axes given must be `tuple` or `list`, got: {type(axes)}"
+                    )
+                axes = tuple(axes)
+
+                if len(axes) != ndim:
+                    raise ValueError(
+                        f"Tranpose axes len mush much the ndim of tensor, got {len(axes)}, expected {ndim}"
+                    )
+
+                seen_axes = set()
+                for ax in axes:
+                    if not isinstance(ax, int):
+                        raise TypeError(
+                            f"Tranpose axes must have only ints, got {ax} of type {type(ax)}"
+                        )
+                    if not (0 <= ax < ndim):
+                        raise ValueError(f"Axes out of bounds {ax}")
+                    if ax in seen_axes:
+                        raise ValueError(f"Duplicate axes: {ax}")
+
+                    seen_axes.add(ax)
+
+                if len(seen_axes) != ndim:
+                    raise ValueError("Tranpose axes missmatch")
+
+            inf_shape = tuple(shape_in[i] for i in axes)
+
+        else:
+            raise ValueError("Unsuported OP found: {op}, internal error")
 
         node = Node(
             id=new_id,
@@ -515,3 +560,7 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
         )
 
     return result
+
+
+def executor(graph: dict[Hashable, Node]) -> np.ndarray:
+    pass
