@@ -1,13 +1,12 @@
 from __future__ import annotations  # do not touch
 
-from collections import defaultdict
 from typing import Hashable, Optional
+import warnings
 
-import math
 import numpy as np
 import numpy.typing as npt
 
-from macrograd.engine import get_default_graph, Ops
+from macrograd.engine import get_default_graph, Ops, executor
 
 type ArrayLike = int | float | np.ndarray | list | tuple
 type TensorLike = Tensor | int | float | np.ndarray | list
@@ -30,8 +29,11 @@ class Tensor:
     ):
         self.graph = get_default_graph()
         self.requires_grad = requires_grad
-        self.data = np.array(array, dtype=precision)
-        self.shape = self.data.shape
+        if array is not None:
+            self.data = np.array(array, dtype=precision)
+            self.shape = self.data.shape
+        else:
+            self.data = None
         self._grad: npt.ArrayLike | None = None
         self.node_id: Hashable
 
@@ -49,6 +51,15 @@ class Tensor:
     @property
     def grad(self):
         return self._grad
+
+    def realize(self):
+        if self.node.op == Ops.CONST:
+            return self.data
+        else:
+            print('calling executor')
+            executor(self.graph)
+            self.data = self.node.computed_tensor
+            return self.data
 
     def __add__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
@@ -134,7 +145,7 @@ class Tensor:
 
     def reshape(self, shape: int | tuple):
         result_id = self.graph.add_node(
-            Ops.RESHAPE, (self.node_id,), shape_reshape=shape
+            Ops.RESHAPE, (self.node_id,), kwargs={"shape": shape},
         )
         result = Tensor(requires_grad=self.requires_grad, _node_id=result_id)
         return result

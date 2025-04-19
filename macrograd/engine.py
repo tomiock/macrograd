@@ -164,7 +164,6 @@ class Graph:
         input_ids: tuple[Hashable, ...],
         # supported: float, int, list, ndarray
         static_data: Any = None,
-        shape_reshape: Optional[int | tuple] = None,
         kwargs: Optional[dict[str, Any]] = None,
     ) -> Hashable:
         new_id = self._get_next_id(op.name)
@@ -313,8 +312,8 @@ class Graph:
             if shape_in is None:
                 raise ValueError("Shape of input tensor is none")
 
-            if shape_reshape:
-                new_shape_arg = shape_reshape
+            if kwargs.get("shape"):
+                new_shape_arg = kwargs.get("shape")
             else:
                 raise ValueError("Required `shape` argument in reshape operation")
 
@@ -437,11 +436,13 @@ class Graph:
             dtype=inf_dtype,
             op_kwargs=kwargs,
         )
-        self.nodes[new_id] = node
 
         for input_id in input_ids:
             if input_id in self.nodes:
                 self.nodes[input_id].successors.add(new_id)
+
+        self.nodes[new_id] = node
+        node.computed_tensor = static_data
 
         return new_id
 
@@ -525,20 +526,20 @@ class Graph:
             return None
 
 
-def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
+def topo_sort(graph_nodes: dict[Hashable, Node]) -> list[Hashable]:
     in_degree: dict[Hashable, int] = defaultdict(int)
 
-    for _, node in graph.items():
+    for _, node in graph_nodes.items():
         if not hasattr(node, "successors") or not isinstance(node.successors, set):
             raise AttributeError("Node is missing 'succesors' method")
 
         for successor_id in node.successors:
-            if successor_id not in graph:
+            if successor_id not in graph_nodes:
                 raise KeyError("node in succesors not found in graph")
             in_degree[successor_id] += 1
 
     # initial queue with all nodes that do not have succesors (source nodes)
-    queue = deque([node_id for node_id in graph if in_degree[node_id] == 0])
+    queue = deque([node_id for node_id in graph_nodes if in_degree[node_id] == 0])
 
     result: list[Hashable] = []
 
@@ -546,7 +547,7 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
         u_id = queue.popleft()
         result.append(u_id)
 
-        node_u = graph[u_id]
+        node_u = graph_nodes[u_id]
 
         for v_id in node_u.successors:
             in_degree[v_id] -= 1
@@ -554,7 +555,7 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
             if in_degree[v_id] == 0:
                 queue.append(v_id)
 
-    if len(result) != len(graph):
+    if len(result) != len(graph_nodes):
         raise ValueError(
             "the graph appears to have cycles, this is not supported. wtf did you do, no RNNs allowed here."
         )
@@ -562,5 +563,72 @@ def topo_sort(graph: dict[Hashable, Node]) -> list[Hashable]:
     return result
 
 
-def executor(graph: dict[Hashable, Node]) -> np.ndarray:
-    pass
+def executor(graph: Graph) -> np.ndarray:
+    exec_list = topo_sort(graph.nodes)
+
+    for node_id in exec_list:
+        node = graph.nodes[node_id]
+
+        if node.op == Ops.CONST:
+            pass
+
+        elif node.op == Ops.ADD:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.add(tensor0, tensor1)
+
+        elif node.op == Ops.MUL:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.multiply(tensor0, tensor1)
+
+        elif node.op == Ops.EXP:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+
+            node.computed_tensor = np.exp(tensor0)
+
+        elif node.op == Ops.SUM:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+
+            keepdims = node.op_kwargs.get("keepdims")
+            axis = node.op_kwargs.get("axis")
+
+            node.computed_tensor = np.sum(tensor0, axis=axis, keepdims=keepdims)
+
+        elif node.op == Ops.POW:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.pow(tensor0, tensor1)
+
+        elif node.op == Ops.LOG:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            base = node.op_kwargs.get("base")
+
+            if base == 'e':
+                node.computed_tensor = np.log(tensor0)
+            else:
+                node.computed_tensor = np.log(tensor0) / np.log(base)
+
+        elif node.op == Ops.MATMUL:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.matmul(tensor0, tensor1)
+
+        elif node.op == Ops.RESHAPE:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            shape = node.op_kwargs.get("shape")
+
+            node.computed_tensor = np.reshape(tensor0, shape=shape)
+
+        elif node.op == Ops.TRANSPOSE:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            axes = node.op_kwargs.get("axes")
+
+            node.computed_tensor = np.transpose(tensor0, axes=axes)
+
+        else:
+            raise RuntimeError(f"Op {node.op} not supported")
