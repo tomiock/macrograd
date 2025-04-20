@@ -158,6 +158,9 @@ class Graph:
 
         return new_id
 
+    def realize(self) -> None:
+            exec
+
     def add_node(
         self,
         op: Ops,
