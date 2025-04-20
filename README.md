@@ -31,7 +31,7 @@ my_tensor = Tensor(
 
 logits = softmax(my_tensor)
 logits.realize() # execture the graph
-# also can do `logits.graph.realize()`
+# would be the same as `logits.graph.realize()`
 
 # access the computed tensor
 logits.data
