@@ -86,6 +86,8 @@ logits.data
 
 The graph can be visualized using `graphviz` by calling `Graph.visualized()` on any graph. This would be graph associated with the softmax function used before:
 
+<img src="https://github.com/user-attachments/assets/b331564b-935e-4118-97f9-3d6fdcd13ff9" widht='600' height='600'>
+
 
 ### MNIST
 Multiclass MNIST Classification with 97% accuracy on test set with 2 or 1 epochs (60k train images)
