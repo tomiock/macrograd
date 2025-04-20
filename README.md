@@ -17,7 +17,7 @@ As opossed to the great coders of [micrograd](https://github.com/karpathy/microg
 Everytime an operation is made on a `Tensor`, a new node is added into the implicit computational graph. To access the tensor data,
 the whole graph needs to be computed, either by calling `realize()` on a `Tensor` or `Graph`.
 
-A default graph is created is none is specified when calling `Tensor` to create new tensors or make operations on them:
+A default graph is created if none is specified when calling `Tensor`. No need to handle manually handle a graph everytime:
 ```python
 from macrograd import Tensor
 
@@ -31,6 +31,7 @@ my_tensor = Tensor(
 
 logits = softmax(my_tensor)
 logits.realize() # execture the graph
+# also can do `logits.graph.realize()`
 
 # access the computed tensor
 logits.data
