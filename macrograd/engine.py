@@ -7,6 +7,7 @@ from enum import Enum, IntEnum, auto
 from typing import Any, Hashable, Optional
 
 import numpy as np
+import cupy as cp
 
 from macrograd.utils_shape import (
     _calc_broadcast_shape,
@@ -637,31 +638,31 @@ def executor(graph: Graph) -> np.ndarray:
             raise RuntimeError(f"Op {node.op} not supported")
 
 
-def executor_cupy(graph: Graph) -> np.ndarray:
+def executor_cupy(graph: Graph) -> cp.ndarray:
     exec_list = topo_sort(graph.nodes)
 
     for node_id in exec_list:
         node = graph.nodes[node_id]
 
         if node.op == Ops.CONST:
-            pass
+            node.computed_tensor = cp.array(node.computed_tensor)
 
         elif node.op == Ops.ADD:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             tensor1 = graph.nodes[node.inputs[1]].computed_tensor
 
-            node.computed_tensor = np.add(tensor0, tensor1)
+            node.computed_tensor = cp.add(tensor0, tensor1)
 
         elif node.op == Ops.MUL:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             tensor1 = graph.nodes[node.inputs[1]].computed_tensor
 
-            node.computed_tensor = np.multiply(tensor0, tensor1)
+            node.computed_tensor = cp.multiply(tensor0, tensor1)
 
         elif node.op == Ops.EXP:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
 
-            node.computed_tensor = np.exp(tensor0)
+            node.computed_tensor = cp.exp(tensor0)
 
         elif node.op == Ops.SUM:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
@@ -669,40 +670,40 @@ def executor_cupy(graph: Graph) -> np.ndarray:
             keepdims = node.op_kwargs.get("keepdims")
             axis = node.op_kwargs.get("axis")
 
-            node.computed_tensor = np.sum(tensor0, axis=axis, keepdims=keepdims)
+            node.computed_tensor = cp.sum(tensor0, axis=axis, keepdims=keepdims)
 
         elif node.op == Ops.POW:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             tensor1 = graph.nodes[node.inputs[1]].computed_tensor
 
-            node.computed_tensor = np.pow(tensor0, tensor1)
+            node.computed_tensor = cp.pow(tensor0, tensor1)
 
         elif node.op == Ops.LOG:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             base = node.op_kwargs.get("base")
 
             if base == "e":
-                node.computed_tensor = np.log(tensor0)
+                node.computed_tensor = cp.log(tensor0)
             else:
-                node.computed_tensor = np.log(tensor0) / np.log(base)
+                node.computed_tensor = cp.log(tensor0) / cp.log(base)
 
         elif node.op == Ops.MATMUL:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             tensor1 = graph.nodes[node.inputs[1]].computed_tensor
 
-            node.computed_tensor = np.matmul(tensor0, tensor1)
+            node.computed_tensor = cp.matmul(tensor0, tensor1)
 
         elif node.op == Ops.RESHAPE:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             shape = node.op_kwargs.get("shape")
 
-            node.computed_tensor = np.reshape(tensor0, shape=shape)
+            node.computed_tensor = cp.reshape(tensor0, shape=shape)
 
         elif node.op == Ops.TRANSPOSE:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             axes = node.op_kwargs.get("axes")
 
-            node.computed_tensor = np.transpose(tensor0, axes=axes)
+            node.computed_tensor = cp.transpose(tensor0, axes=axes)
 
         else:
             raise RuntimeError(f"Op {node.op} not supported")
