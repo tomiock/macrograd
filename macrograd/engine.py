@@ -7,7 +7,7 @@ from enum import Enum, IntEnum, auto
 from typing import Any, Hashable, Optional
 
 import numpy as np
-import cupy as cp
+# import cupy as cp
 
 from macrograd.utils_shape import (
     _calc_broadcast_shape,
@@ -90,12 +90,14 @@ def dtype2tensor_type(dtype: np.dtype):
 @dataclass
 class Node:
     id: Hashable
-    op: Optional[Ops] = None
+    op: Ops
     inputs: tuple[Hashable, ...] = field(default_factory=tuple)
     successors: set[Hashable] = field(default_factory=set)
-    shape: Optional[tuple[int, ...]] = None
+    shape: tuple[int, ...] = tuple()
     dtype: Optional[Type] = None
     device: str = "cpu"
+    grad: Optional[np.ndarray] = None
+    requires_grad: bool = False
     computed_tensor: Optional[np.ndarray] = None
 
     op_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -160,12 +162,13 @@ class Graph:
         return new_id
 
     def realize(self) -> None:
-        exec
+        executor(self)
 
     def add_node(
         self,
         op: Ops,
         input_ids: tuple[Hashable, ...],
+        rg: bool = False,
         # supported: float, int, list, ndarray
         static_data: Any = None,
         kwargs: Optional[dict[str, Any]] = None,
@@ -447,6 +450,9 @@ class Graph:
 
         self.nodes[new_id] = node
         node.computed_tensor = static_data
+        node.requires_grad = rg
+        if rg:
+            node.grad = np.zeros(node.shape)
 
         return new_id
 
@@ -491,9 +497,9 @@ class Graph:
             # Create a multi-line label for the node
 
             if node.op_kwargs:
-                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nkwargs:\n{node.op_kwargs}"
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nrg:{node.requires_grad}\nkwargs:\n{node.op_kwargs}"
             else:
-                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}"
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nrg:{node.requires_grad}"
 
             if node.op == Ops.CONST and node.computed_tensor is not None:
                 static_data_repr = repr(node.computed_tensor)
@@ -567,29 +573,55 @@ def topo_sort(graph_nodes: dict[Hashable, Node]) -> list[Hashable]:
     return result
 
 
-def executor(graph: Graph) -> np.ndarray:
+def inputs_binary_ops(graph, node) -> tuple[np.ndarray, np.ndarray]:
+    tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+    tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+    if not isinstance(tensor0, np.ndarray):
+        raise TypeError(
+            f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
+        )
+    if not isinstance(tensor1, np.ndarray):
+        raise TypeError(
+            f"Invalid type found inside tensor {node.inputs[1]}, got {type(tensor1)}"
+        )
+
+    return tensor0, tensor1
+
+
+def inputs_unary_ops(graph, node) -> np.ndarray:
+    tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+
+    if not isinstance(tensor0, np.ndarray):
+        raise TypeError(
+            f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
+        )
+
+    return tensor0
+
+
+def executor(graph: Graph):
     exec_list = topo_sort(graph.nodes)
 
     for node_id in exec_list:
         node = graph.nodes[node_id]
 
         if node.op == Ops.CONST:
-            pass
+            # ensure we are working with arrays
+            node.computed_tensor = np.array(node.computed_tensor)
 
         elif node.op == Ops.ADD:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+            tensor0, tensor1 = inputs_binary_ops(graph, node)
 
             node.computed_tensor = np.add(tensor0, tensor1)
 
         elif node.op == Ops.MUL:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+            tensor0, tensor1 = inputs_binary_ops(graph, node)
 
             node.computed_tensor = np.multiply(tensor0, tensor1)
 
         elif node.op == Ops.EXP:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor0 = inputs_unary_ops(graph, node)
 
             node.computed_tensor = np.exp(tensor0)
 
@@ -602,34 +634,32 @@ def executor(graph: Graph) -> np.ndarray:
             node.computed_tensor = np.sum(tensor0, axis=axis, keepdims=keepdims)
 
         elif node.op == Ops.POW:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+            tensor0, tensor1 = inputs_binary_ops(graph, node)
 
             node.computed_tensor = np.pow(tensor0, tensor1)
 
         elif node.op == Ops.LOG:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor0 = inputs_unary_ops(graph, node)
             base = node.op_kwargs.get("base")
 
-            if base == "e":
+            if base == "e" or base is None:
                 node.computed_tensor = np.log(tensor0)
             else:
                 node.computed_tensor = np.log(tensor0) / np.log(base)
 
         elif node.op == Ops.MATMUL:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+            tensor0, tensor1 = inputs_binary_ops(graph, node)
 
             node.computed_tensor = np.matmul(tensor0, tensor1)
 
         elif node.op == Ops.RESHAPE:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor0 = inputs_unary_ops(graph, node)
             shape = node.op_kwargs.get("shape")
 
             node.computed_tensor = np.reshape(tensor0, shape=shape)
 
         elif node.op == Ops.TRANSPOSE:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor0 = inputs_unary_ops(graph, node)
             axes = node.op_kwargs.get("axes")
 
             node.computed_tensor = np.transpose(tensor0, axes=axes)

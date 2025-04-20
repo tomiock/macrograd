@@ -1,15 +1,15 @@
 from __future__ import annotations  # do not touch
 
 from typing import Hashable, Optional
-import warnings
 
 import numpy as np
 import numpy.typing as npt
 
-from macrograd.engine import get_default_graph, Ops, executor, Graph
+from macrograd.engine import get_default_graph, Ops, Graph, executor
+from macrograd.backward import _backward
 
-ArrayLike = int | float | np.ndarray | list | tuple
-TensorLike = "Tensor" | int | float | np.ndarray | list
+type ArrayLike = int | float | np.ndarray | list
+type TensorLike = Tensor | int | float | np.ndarray | list
 
 
 def _to_var(x: TensorLike) -> "Tensor":
@@ -24,10 +24,11 @@ class Tensor:
         self,
         array: Optional[ArrayLike] = None,
         requires_grad=False,
-        precision=np.float32,
         graph: Optional[Graph] = None,
         _node_id: Optional[Hashable] = None,
     ):
+        self.node_id: Hashable
+
         if graph is None:
             self.graph = get_default_graph()
         else:
@@ -35,29 +36,33 @@ class Tensor:
 
         self.requires_grad = requires_grad
 
+        # handle input given
         if array is not None:
-            self._data = np.array(array, dtype=precision)
+            if isinstance(array, np.ndarray):
+                self._data = array
+            elif isinstance(array, (list, int, float)):
+                self._data = np.array(array)
+            else:
+                raise TypeError(
+                    f"Input to tensor must be list, int, float or np.ndarray, got {type(array)}"
+                )
             self.shape = self._data.shape
-        else:
-            self._data = None
 
-        self._grad: npt.ArrayLike | None = None
-        self.node_id: Hashable
-
-        if _node_id is not None:
-            self.node_id = _node_id
-            self.node = self.graph.nodes[self.node_id]
-        elif array is not None:
+            # create a CONST NODE
             self.node_id = self.graph.add_node(
-                op=Ops.CONST, input_ids=(), static_data=array
+                op=Ops.CONST, input_ids=(), static_data=array, rg=self.requires_grad
             )
             self.node = self.graph.nodes[self.node_id]
         else:
-            raise TypeError("must provide data for const or node_id from operation")
+            if _node_id is not None:
+                self.node_id = _node_id
+                self.node = self.graph.nodes[self.node_id]
+            else:
+                raise TypeError("must provide data for const or node_id from operation")
 
     @property
     def grad(self):
-        return self._grad
+        return self.node.grad
 
     @property
     def data(self):
@@ -72,12 +77,16 @@ class Tensor:
             executor(self.graph)
             self._data = self.node.computed_tensor
 
+    def backprop(self):
+        _backward(self.graph, self.node_id)
+
     def __add__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(array=other)
-        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id))
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id), rg=rg)
         result = Tensor(
-            requires_grad=(self.requires_grad or other.requires_grad),
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
@@ -86,9 +95,10 @@ class Tensor:
     def __mul__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(array=other)
-        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id))
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id), rg=rg)
         result = Tensor(
-            requires_grad=(self.requires_grad or other.requires_grad),
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
@@ -97,9 +107,10 @@ class Tensor:
     def __pow__(self, exp: TensorLike) -> Tensor:
         if not isinstance(exp, Tensor):
             exp = Tensor(array=exp)
-        result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id))
+        rg = self.requires_grad or exp.requires_grad
+        result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id), rg=rg)
         result = Tensor(
-            requires_grad=(self.requires_grad or exp.requires_grad),
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
@@ -108,9 +119,13 @@ class Tensor:
     def __matmul__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(array=other)
-        result_id = self.graph.add_node(Ops.MATMUL, (self.node_id, other.node_id))
+
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(
+            Ops.MATMUL, (self.node_id, other.node_id), rg=rg
+        )
         result = Tensor(
-            requires_grad=(self.requires_grad or other.requires_grad),
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
@@ -125,9 +140,12 @@ class Tensor:
         kwargs = dict()
         if axes is not None:
             kwargs["axes"] = axes
-        result_id = self.graph.add_node(Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs)
+        rg = self.requires_grad
+        result_id = self.graph.add_node(
+            Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs, rg=rg
+        )
         result = Tensor(
-            requires_grad=self.requires_grad,
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
@@ -137,58 +155,55 @@ class Tensor:
         kwargs = dict()
         kwargs["axis"] = axis
         kwargs["keepdims"] = keepdims
+        rg = self.requires_grad
 
-        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs)
+        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs, rg=rg)
         result = Tensor(
-            requires_grad=self.requires_grad,
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
         return result
 
     def exp(self) -> Tensor:
-        result_id = self.graph.add_node(Ops.EXP, (self.node_id,))
+        rg = self.requires_grad
+        result_id = self.graph.add_node(Ops.EXP, (self.node_id,), rg=rg)
         result = Tensor(
-            requires_grad=self.requires_grad,
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
         return result
 
     def log(self, base: float | str = "e"):
-        graph = get_default_graph()
-        result_id = graph.add_node(
-            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}
+        rg = self.requires_grad
+        result_id = self.graph.add_node(
+            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}, rg=rg
         )
         result = Tensor(
-            requires_grad=self.requires_grad,
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
         return result
 
     def reshape(self, shape: int | tuple):
+        rg = self.requires_grad
         result_id = self.graph.add_node(
             Ops.RESHAPE,
             (self.node_id,),
             kwargs={"shape": shape},
+            rg=rg,
         )
         result = Tensor(
-            requires_grad=self.requires_grad,
+            requires_grad=rg,
             _node_id=result_id,
             graph=self.graph,
         )
         return result
 
-    def _backward(self):
-        raise NotImplementedError
-
-    def backprop(self):
-        self._backward()
-        self.parents = set()
-
     def __repr__(self) -> str:
-        return f"{self.data}, grad={self.grad}, shape={self.shape}, rgrad={self.requires_grad}"
+        return f"{self.node.computed_tensor}, grad={self.grad}, shape={self.node.shape}, rgrad={self.requires_grad}"
 
     def sqrt(self) -> Tensor:
         return self**0.5

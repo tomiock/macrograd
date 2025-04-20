@@ -1,24 +1,16 @@
-from macrograd import Tensor
-from macrograd.engine import get_default_graph
+from macrograd import Tensor, Graph
 
+from numpy.random import randn
 
-default_graph = get_default_graph()
+from macrograd.engine import topo_sort
 
-def softmax(x: Tensor) -> Tensor:
-    e_x = x.exp()
-    return e_x / (e_x.sum(axis=1, keepdims=True))
+g = Graph()
 
+data = Tensor(randn(2,).tolist(), graph=g)
+weight = Tensor(randn(2, 2).tolist(), graph=g, requires_grad=True)
+bias = Tensor(randn(2,).tolist(), graph=g, requires_grad=True)
 
-my_tensor = Tensor(
-    [[1, 2, 3, 4],
-     [5, 6, 7, 8]])
+x = (data @ weight) + bias
+g.realize()
 
-logits = softmax(my_tensor)
-
-default_graph.realize()
-default_graph.visualize()
-
-# access the computed tensor
-logits.data
-# >>> [[0.0320586  0.08714432 0.23688282 0.64391426]
-# >>> [0.0320586  0.08714432 0.23688282 0.64391426]]
+x.backprop()
