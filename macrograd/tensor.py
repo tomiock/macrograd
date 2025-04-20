@@ -8,8 +8,8 @@ import numpy.typing as npt
 
 from macrograd.engine import get_default_graph, Ops, executor, Graph
 
-type ArrayLike = int | float | np.ndarray | list | tuple
-type TensorLike = Tensor | int | float | np.ndarray | list
+ArrayLike = int | float | np.ndarray | list | tuple
+TensorLike = "Tensor" | int | float | np.ndarray | list
 
 
 def _to_var(x: TensorLike) -> "Tensor":
