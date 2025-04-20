@@ -14,7 +14,7 @@ REQUIRED_PKGS = [
 ]
 
 EXTRAS_REQUIRED_PKGS = {
-    "cuda": ["cupy-cuda11x"],
+    "cuda": ["cupy-cuda12x"],
     "viz": ["graphviz"],
 }
 
