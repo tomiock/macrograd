@@ -159,7 +159,7 @@ class Graph:
         return new_id
 
     def realize(self) -> None:
-            exec
+        exec
 
     def add_node(
         self,
@@ -610,7 +610,78 @@ def executor(graph: Graph) -> np.ndarray:
             tensor0 = graph.nodes[node.inputs[0]].computed_tensor
             base = node.op_kwargs.get("base")
 
-            if base == 'e':
+            if base == "e":
+                node.computed_tensor = np.log(tensor0)
+            else:
+                node.computed_tensor = np.log(tensor0) / np.log(base)
+
+        elif node.op == Ops.MATMUL:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.matmul(tensor0, tensor1)
+
+        elif node.op == Ops.RESHAPE:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            shape = node.op_kwargs.get("shape")
+
+            node.computed_tensor = np.reshape(tensor0, shape=shape)
+
+        elif node.op == Ops.TRANSPOSE:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            axes = node.op_kwargs.get("axes")
+
+            node.computed_tensor = np.transpose(tensor0, axes=axes)
+
+        else:
+            raise RuntimeError(f"Op {node.op} not supported")
+
+
+def executor_cupy(graph: Graph) -> np.ndarray:
+    exec_list = topo_sort(graph.nodes)
+
+    for node_id in exec_list:
+        node = graph.nodes[node_id]
+
+        if node.op == Ops.CONST:
+            pass
+
+        elif node.op == Ops.ADD:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.add(tensor0, tensor1)
+
+        elif node.op == Ops.MUL:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.multiply(tensor0, tensor1)
+
+        elif node.op == Ops.EXP:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+
+            node.computed_tensor = np.exp(tensor0)
+
+        elif node.op == Ops.SUM:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+
+            keepdims = node.op_kwargs.get("keepdims")
+            axis = node.op_kwargs.get("axis")
+
+            node.computed_tensor = np.sum(tensor0, axis=axis, keepdims=keepdims)
+
+        elif node.op == Ops.POW:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+
+            node.computed_tensor = np.pow(tensor0, tensor1)
+
+        elif node.op == Ops.LOG:
+            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            base = node.op_kwargs.get("base")
+
+            if base == "e":
                 node.computed_tensor = np.log(tensor0)
             else:
                 node.computed_tensor = np.log(tensor0) / np.log(base)
