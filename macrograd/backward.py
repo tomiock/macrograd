@@ -330,8 +330,6 @@ def grad_max(
             _data_expanded = np.expand_dims(_data, axis=norm_axis)
         except Exception:
             raise ValueError("Shape missmatch when calculating the gradient of `max`")
-    distributed_mask = _data_expanded / mask
-    total_mask = mask * distributed_mask
-    total_mask[np.isnan(total_mask)] = 0
 
-    return total_mask
+    distributed_mask = _data_expanded / num_max
+    return mask * distributed_mask
