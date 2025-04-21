@@ -19,12 +19,15 @@ class Linear:
         return data + self.b
 
     def init_params(self):
-        std_dev = np.sqrt(2.0 / self.in_dims)
-        self.w = Tensor(np.random.randn(*self._w_shape) * std_dev, requires_grad=True, label="w")
+        self.w = Tensor(
+            np.random.randn(*self._w_shape),
+            requires_grad=True,
+        )
 
         # TODO: small positive, so everything moves to the linear side of the relu
         self.b = Tensor(
-            np.zeros(self._b_shape), requires_grad=True, label="b"
+            np.zeros(self._b_shape),
+            requires_grad=True,
         )
 
         return [self.w, self.b]
@@ -83,9 +86,6 @@ class SGD_Optimizer:
             self.step_fn = step_fn
 
     def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-        for param in params:
-            param.zero_grad()
-
         loss.backprop()
 
         return list(map(self.step_fn, params))
@@ -106,7 +106,8 @@ class SGD_MomentumOptimizer:
         for param in params_copy:
             self.velocities.append(
                 Tensor(
-                    np.zeros_like(param.data), requires_grad=False, precision=np.float32
+                    np.zeros_like(param.data),
+                    requires_grad=False,
                 )
             )
 
@@ -120,9 +121,6 @@ class SGD_MomentumOptimizer:
         return param
 
     def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-        for param in params:
-            param.zero_grad()
-
         loss.backprop()
 
         updated_params = []

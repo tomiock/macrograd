@@ -1,34 +1,42 @@
+from math import prod
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 from macrograd import Tensor
-from macrograd.tensor import _to_var
+from macrograd.engine import get_default_graph
+from macrograd.tensor import relu
 from sklearn.datasets import make_moons
 
-from macrograd.functions import log2, sigmoid, relu
-from macrograd.model import SGD_MomentumOptimizer, SGD_Optimizer, Model, Linear
-
-import warnings
+from macrograd.model import SGD_MomentumOptimizer, Model, Linear
 
 np.random.seed = 42
-warnings.filterwarnings("ignore")
 
 
 def BCE(y_pred: Tensor, y_true) -> Tensor:
-    y_true = _to_var(y_true)
-    y_true = y_true.reshape(-1, 1)
+    if not isinstance(y_true, Tensor):
+        y_true = y_true.reshape((-1, 1))
+        y_true = Tensor(array=y_true)
 
     y_true.requires_grad = False
 
-    loss_val = y_true * log2(y_pred) + (1 - y_true) * log2(1 - y_pred)
+    loss_val = y_true * y_pred.log(base=2) + (1 - y_true) * 1 - y_pred.log(base=2)
+    size_y_true = prod(y_true.node.shape)
 
-    return -1 * (loss_val.sum() / y_true.data.size)
+    return -1 * (loss_val.sum() / size_y_true)
 
+
+graph = get_default_graph()
 
 # --- Data Loading and Preprocessing ---
 X, y = make_moons(n_samples=100, noise=0.2, random_state=42)
+y = np.array(y)
 X = Tensor(X, requires_grad=False)
 y_one_hot = Tensor(np.eye(2)[(y.flatten() + 1).astype(int) // 2])
+
+
+def sigmoid(x: Tensor):
+    return x / (1 + (-x).exp())
 
 
 class NeuralNetwork(Model):
@@ -36,13 +44,13 @@ class NeuralNetwork(Model):
         super(NeuralNetwork, self).__init__()
 
         self.l1 = Linear(in_dims, 24)
-        self.l4 = Linear(24, out_dims)
+        self.l2 = Linear(24, out_dims)
 
     def __call__(self, data):
         data = self.l1(data)
         data = relu(data)
 
-        data = self.l4(data)
+        data = self.l2(data)
         data = sigmoid(data)
 
         return data
@@ -55,7 +63,7 @@ parameters = model.parameters
 num_epochs = 2000
 losses = []
 
-optimizer = SGD_MomentumOptimizer(learning_rate=.01, alpha=.9, params_copy=parameters)
+optimizer = SGD_MomentumOptimizer(learning_rate=0.01, alpha=0.9, params_copy=parameters)
 
 for epoch in range(num_epochs):
     # forward pass
@@ -64,11 +72,16 @@ for epoch in range(num_epochs):
     # loss calculation
     loss = BCE(y_pred, y)
 
+    graph.visualize()
+
+    loss.realize()
+
     # parameter update
     parameters = optimizer.step(loss, parameters)
 
     losses.append(loss.data.item())
 
+"""
 # Create a grid of points to evaluate the model
 h = 0.05  # Step size in the mesh
 x_min, x_max = X.data[:, 0].min() - 1, X.data[:, 0].max() + 1
@@ -110,3 +123,4 @@ predictions = (predictions.data > 0.5).astype(
 )  # Threshold at 0.5 for binary classification
 accuracy = np.mean(predictions == y.reshape(-1, 1))  # calculate the accuracy
 print(f"Accuracy: {accuracy * 100:.2f}%")
+"""

@@ -1,8 +1,10 @@
+import math
 from warnings import warn
 import numpy as np
 
-from typing import Hashable
+from typing import Hashable, Sequence, Optional
 from .engine import Graph, Ops, topo_sort, executor
+from .utils_shape import _normalize_axis
 
 
 def _accumulate_grad(graph: Graph, node_id: Hashable, grad_contribution: np.ndarray):
@@ -71,7 +73,8 @@ def _backward(graph: Graph, node_id: Hashable):
         forward_input_tensors = [n.computed_tensor for n in input_nodes]
 
         for tensor in forward_input_tensors:
-            if not isinstance(tensor, np.ndarray):
+            # TODO: fix this
+            if not isinstance(tensor, (np.ndarray, np.float64, np.float32)):
                 raise TypeError(
                     f"Need a `np.ndarray` stored on the nodes, got {type(tensor)}"
                 )
@@ -103,13 +106,13 @@ def _backward(graph: Graph, node_id: Hashable):
                 node.grad,
                 forward_input_tensors[0],
                 forward_input_tensors[1],
-                is_a=True,
+                is_left=True,
             )
             grad1 = grad_matmul(
                 node.grad,
                 forward_input_tensors[0],
                 forward_input_tensors[1],
-                is_a=False,
+                is_left=False,
             )
             _accumulate_grad(graph, node.inputs[0], grad0)
             _accumulate_grad(graph, node.inputs[1], grad1)
@@ -133,8 +136,9 @@ def _backward(graph: Graph, node_id: Hashable):
                 grad_exponent = grad_pow(
                     node.grad, base_tensor, exponent_tensor, is_a=False
                 )
-                _accumulate_grad(graph, node.inputs[0], grad_base)
-                _accumulate_grad(graph, node.inputs[1], grad_exponent)
+                grad_exponent = grad_exponent.reshape(exponent_tensor.shape)
+            _accumulate_grad(graph, node.inputs[0], grad_base)
+            _accumulate_grad(graph, node.inputs[1], grad_exponent)
 
         elif node.op == Ops.SUM:
             if len(node.inputs) != 1:
@@ -143,6 +147,16 @@ def _backward(graph: Graph, node_id: Hashable):
             axis = node.op_kwargs.get("axis")
             keepdims = node.op_kwargs.get("keepdims", False)
             grad0 = grad_sum(node.grad, in_tensor, axis, keepdims)
+            _accumulate_grad(graph, node.inputs[0], grad0)
+
+        elif node.op == Ops.MAX:
+            if len(node.inputs) != 1:
+                continue
+            in_tensor = forward_input_tensors[0]
+            axis = node.op_kwargs.get("axis")
+            keepdims = node.op_kwargs.get("keepdims", False)
+
+            grad0 = grad_max(node.grad, in_tensor, axis, keepdims)
             _accumulate_grad(graph, node.inputs[0], grad0)
 
         elif node.op == Ops.TRANSPOSE:
@@ -168,6 +182,34 @@ def _backward(graph: Graph, node_id: Hashable):
                 continue  # Need original shape
             grad0 = node.grad.reshape(input_node.shape)
             _accumulate_grad(graph, node.inputs[0], grad0)
+        
+        elif node.op == Ops.RELU:
+            if len(node.inputs) != 1:
+                continue
+            input_node = graph.nodes[node.inputs[0]]
+            grad0 = grad_relu(node.grad, input_node.computed_tensor)
+            _accumulate_grad(graph, node.inputs[0], grad0)
+
+        # TODO: mode to grad_log
+        elif node.op == Ops.LOG:
+            if len(node.inputs) != 1:
+                continue
+            input_node = graph.nodes[node.inputs[0]]
+            if input_node.shape is None:
+                continue
+
+            x = input_node.computed_tensor
+            if x is None:
+                warn("Node value stored in node")
+
+            base = node.op_kwargs.get("base", math.e)
+            if base == "e":
+                grad0 = node.grad * (1.0 / x)
+            else:
+                ln_base = math.log(float(base))
+                grad0 = node.grad * (1.0 / (x * ln_base))
+
+            _accumulate_grad(graph, node.inputs[0], grad0)
 
         else:
             warn(
@@ -175,49 +217,61 @@ def _backward(graph: Graph, node_id: Hashable):
             )
 
 
-def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
-    sum_axes = []
-    for i in range(len(_data.shape)):
-        if i < len(arr.shape):
-            if arr.shape[i] == 1 and _data.shape[i] > 1:
-                sum_axes.append(i)
-        elif i >= len(arr.shape):
-            sum_axes.append(i)
-    return sum_axes
+def unbroadcast(grad, target_shape, broadcast_idx=0) -> np.ndarray:
+    target_ndim = len(target_shape)
+
+    while grad.ndim > target_ndim:
+        grad = np.sum(grad, axis=broadcast_idx)
+    for axis, size in enumerate(target_shape):
+        if size == 1:
+            grad = np.sum(grad, axis=axis, keepdims=True)
+    return grad
 
 
 def grad_add(_data: np.ndarray, arr1: np.ndarray) -> np.ndarray:
-    sum_axes = get_axes_broadcasting(_data, arr1)
-    return np.sum(_data, axis=tuple(sum_axes), keepdims=True)
+    return unbroadcast(_data, arr1.shape)
 
 
 def grad_mul(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
-    sum_axes = get_axes_broadcasting(_data, arr1)
-    return np.sum(np.multiply(_data, arr2), axis=tuple(sum_axes), keepdims=True)
+    return unbroadcast(np.multiply(_data, arr2), arr1.shape)
 
 
 def grad_matmul(
     _data: np.ndarray,
     arr1: np.ndarray,
     arr2: np.ndarray,
-    is_a: bool,
+    is_left: bool,
 ) -> np.ndarray:
-    if is_a:
-        return np.matmul(_data, np.transpose(arr2))
-    elif not is_a:
-        if arr1.ndim == 1 and _data.ndim >= 1:
-            x_col = arr1.reshape(-1, 1)  # Shape (K, 1)
-            dL_dy_row = _data.reshape(1, -1)  # Shape (1, N)
-            return np.matmul(x_col, dL_dy_row)
-        elif arr1.ndim >= 2 and _data.ndim >= 2:  # Standard batched mat @ mat
-            arr1_T_axes = list(range(arr1.ndim))
-            arr1_T_axes[-1], arr1_T_axes[-2] = arr1_T_axes[-2], arr1_T_axes[-1]
-            arr1_T = np.transpose(arr1, axes=arr1_T_axes)
-            return np.matmul(arr1_T, _data)
+    ndim1, ndim2 = arr1.ndim, arr2.ndim
+    shape1, shape2 = arr1.shape, arr2.shape
+
+    if is_left:
+        if ndim2 == 1:
+            grad = _data * arr2
         else:
-            raise NotImplementedError(
-                f"grad_matmul dL/dW not implemented for input shapes {arr1.shape} and gradient shape {_data.shape}"
-            )
+            axes_T = list(range(ndim2))
+            # tranpose the last two axes
+            if ndim2 >= 2:
+                axes_T[-1], axes_T[-2] = axes_T[-2], axes_T[-1]
+            arr2_T = np.transpose(arr2, axes=axes_T)
+            grad = np.matmul(_data, arr2_T)
+        return unbroadcast(grad, shape1)
+    else:
+        if ndim1 == 1:
+            if _data.ndim == 0:
+                grad = arr1 * _data
+            else:
+                x_col = arr1.reshape(-1, 1)
+                dL_dy_row = _data.reshape(1, -1)
+                grad = np.matmul(x_col, dL_dy_row)
+        else:
+            axes_T = list(range(ndim1))
+            # transpose the last two axes
+            if ndim1 >= 2:
+                axes_T[-1], axes_T[-2] = axes_T[-2], axes_T[-1]
+            arr1_T = np.transpose(arr1, axes=axes_T)
+            grad = np.matmul(arr1_T, _data)
+        return unbroadcast(grad, shape2)
 
 
 def grad_pow(
@@ -227,16 +281,12 @@ def grad_pow(
     is_a: bool,
 ) -> np.ndarray:
     if is_a:
-        local_grad = np.multiply(exponent, np.pow(arr, np.array(exponent - 1)))
-        sum_axes = get_axes_broadcasting(_data, arr)
-        return np.sum(
-            np.multiply(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+        return unbroadcast(
+            _data * exponent * arr ** np.where(exponent, exponent - 1, 1.0), arr.shape
         )
     else:
-        local_grad = np.multiply(np.pow(arr, exponent), np.log(arr))
-        sum_axes = get_axes_broadcasting(_data, exponent)
-        return np.sum(
-            np.multiply(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+        return unbroadcast(
+            _data * np.log(arr) * np.power(arr, exponent), exponent.shape
         )
 
 
@@ -253,3 +303,35 @@ def grad_sum(_data: np.ndarray, arr: np.ndarray, axis, keepdims) -> np.ndarray:
 
 def grad_transpose(_data: np.ndarray, axes=None) -> np.ndarray:
     return np.transpose(_data, axes=axes)
+
+
+def grad_relu(_data: np.ndarray, arr: np.ndarray):
+    print(_data)
+    return _data * arr.data > 0
+
+
+def grad_max(
+    _data: np.ndarray,
+    arr: np.ndarray,
+    axis: Optional[int | Sequence[int]],
+    keepdims: bool,
+) -> np.ndarray:
+    norm_axis = _normalize_axis(axis, arr.ndim)
+    output_fwd = np.max(arr, axis=norm_axis, keepdims=True)
+    mask = (arr == output_fwd)
+
+    num_max = np.sum(mask, axis=norm_axis, keepdims=True)
+    num_max = np.where(num_max == 0, 1.0, num_max)
+
+    _data_expanded = _data
+    if not keepdims and arr.ndim > 0 and norm_axis is not None and len(norm_axis) > 0:
+        try:
+            # Add back the reduced dimensions to match the broadcast shape
+            _data_expanded = np.expand_dims(_data, axis=norm_axis)
+        except Exception:
+            raise ValueError("Shape missmatch when calculating the gradient of `max`")
+    distributed_mask = _data_expanded / mask
+    total_mask = mask * distributed_mask
+    total_mask[np.isnan(total_mask)] = 0
+
+    return total_mask

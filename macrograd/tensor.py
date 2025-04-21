@@ -12,13 +12,6 @@ type ArrayLike = int | float | np.ndarray | list
 type TensorLike = Tensor | int | float | np.ndarray | list
 
 
-def _to_var(x: TensorLike) -> "Tensor":
-    if isinstance(x, Tensor):
-        return x
-    else:
-        return Tensor(np.array(x))
-
-
 class Tensor:
     def __init__(
         self,
@@ -73,7 +66,6 @@ class Tensor:
         if self.node.op == Ops.CONST:
             return self.data
         else:
-            print("calling executor")
             executor(self.graph)
             self._data = self.node.computed_tensor
 
@@ -82,7 +74,7 @@ class Tensor:
 
     def __add__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
-            other = Tensor(array=other)
+            other = Tensor(array=other, graph=self.graph)
         rg = self.requires_grad or other.requires_grad
         result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id), rg=rg)
         result = Tensor(
@@ -94,7 +86,7 @@ class Tensor:
 
     def __mul__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
-            other = Tensor(array=other)
+            other = Tensor(array=other, graph=self.graph)
         rg = self.requires_grad or other.requires_grad
         result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id), rg=rg)
         result = Tensor(
@@ -106,7 +98,8 @@ class Tensor:
 
     def __pow__(self, exp: TensorLike) -> Tensor:
         if not isinstance(exp, Tensor):
-            exp = Tensor(array=exp)
+            exp = Tensor(array=exp, graph=self.graph)
+
         rg = self.requires_grad or exp.requires_grad
         result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id), rg=rg)
         result = Tensor(
@@ -118,7 +111,7 @@ class Tensor:
 
     def __matmul__(self, other: TensorLike) -> Tensor:
         if not isinstance(other, Tensor):
-            other = Tensor(array=other)
+            other = Tensor(array=other, graph=self.graph)
 
         rg = self.requires_grad or other.requires_grad
         result_id = self.graph.add_node(
@@ -144,6 +137,20 @@ class Tensor:
         result_id = self.graph.add_node(
             Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs, rg=rg
         )
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
+        )
+        return result
+
+    def max(self, axis=None, keepdims=False) -> Tensor:
+        kwargs = dict()
+        kwargs["axis"] = axis
+        kwargs["keepdims"] = keepdims
+        rg = self.requires_grad
+
+        result_id = self.graph.add_node(Ops.MAX, (self.node_id,), kwargs=kwargs, rg=rg)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -202,6 +209,9 @@ class Tensor:
         )
         return result
 
+    def relu(self) -> Tensor:
+        return relu(self)
+
     def __repr__(self) -> str:
         return f"{self.node.computed_tensor}, grad={self.grad}, shape={self.node.shape}, rgrad={self.requires_grad}"
 
@@ -209,25 +219,50 @@ class Tensor:
         return self**0.5
 
     def __radd__(self, other: TensorLike) -> Tensor:
-        return _to_var(other) + self
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other + self
 
     def __sub__(self, other: TensorLike) -> Tensor:
-        return self + (-_to_var(other))
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return self + -(other)
 
     def __rsub__(self, other: TensorLike) -> Tensor:
-        return _to_var(other) + (-self)
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other + (-self)
 
     def __rmul__(self, other: TensorLike) -> Tensor:
-        return _to_var(other) * self
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other * self
 
     def __truediv__(self, other: TensorLike) -> Tensor:
-        return self * (_to_var(other) ** np.array(-1.0))
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return self * (other ** np.array(-1.0))
 
     def __rtruediv__(self, other: TensorLike) -> Tensor:
-        return _to_var(other) * (self ** np.array(-1.0))
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other * (self ** np.array(-1.0))
 
     def __rmatmul__(self, other: TensorLike) -> Tensor:
-        return _to_var(other) @ self
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other @ self
 
     def __neg__(self) -> Tensor:
         return self * -1.0
+
+
+def relu(in_tensor: Tensor) -> Tensor:
+    graph = in_tensor.graph
+    rg = in_tensor.requires_grad
+    node_id = graph.add_node(
+        op=Ops.RELU,
+        input_ids=(in_tensor.node_id,),
+        rg=rg,
+    )
+    return Tensor(requires_grad=rg, _node_id=node_id, graph=graph)

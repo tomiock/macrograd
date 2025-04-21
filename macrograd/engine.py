@@ -31,13 +31,15 @@ class Ops(FastEnum):
     ADD = auto()
     MUL = auto()
     MATMUL = auto()
-    SUM = auto()
-    MAX = auto()
     EXP = auto()
     LOG = auto()
     POW = auto()
     CONV2D = auto()
     CONV1D = auto()
+
+    SUM = auto()
+    MAX = auto()
+    RELU = auto()
 
     # views
     TRANSPOSE = auto()
@@ -236,14 +238,14 @@ class Graph:
             try:
                 # TODO: support batched operations
                 inf_shape = _calc_matmul_shape(shape0, shape1)
-            except ValueError:
-                raise ValueError(f"Incompatible shapes for {op}: {shape0} and {shape1}")
+            except ValueError as e:
+                raise ValueError(e) from e
 
             inf_dtype = calc_promoted_dtype(type0, type1)
 
         elif op == Ops.POW:
-            shape_exp = self.nodes[input_ids[1]].shape
             shape_base = self.nodes[input_ids[0]].shape
+            shape_exp = self.nodes[input_ids[1]].shape
 
             # applied element wise into the base tensor
             inf_shape = shape_base
@@ -253,7 +255,7 @@ class Graph:
             for dim_size in shape_exp:
                 if dim_size != 1:
                     raise ValueError(
-                        f"Exponent tensor has to be scalar-like: {shape_base} shape found"
+                        f"Exponent tensor has to be scalar-like: {shape_exp} shape found"
                     )
 
             type1 = self.nodes[input_ids[1]].dtype
@@ -311,7 +313,7 @@ class Graph:
             except TypeError:
                 raise TypeError(f"Unsuported type for {op}: {node_in.dtype}")
 
-        elif op == Ops.RESHAPE:
+        elif op == Ops.RESHAPE or op == Ops.MAX:
             node_in = self.nodes[input_ids[0]]
             shape_in = node_in.shape
             inf_dtype = node_in.dtype
@@ -431,6 +433,11 @@ class Graph:
                     raise ValueError("Tranpose axes missmatch")
 
             inf_shape = tuple(shape_in[i] for i in axes)
+
+        elif Ops.RELU:
+            node_in = self.nodes[input_ids[0]]
+            inf_shape = node_in.shape
+            inf_dtype = node_in.dtype
 
         else:
             raise ValueError("Unsuported OP found: {op}, internal error")
@@ -577,11 +584,11 @@ def inputs_binary_ops(graph, node) -> tuple[np.ndarray, np.ndarray]:
     tensor0 = graph.nodes[node.inputs[0]].computed_tensor
     tensor1 = graph.nodes[node.inputs[1]].computed_tensor
 
-    if not isinstance(tensor0, np.ndarray):
+    if not isinstance(tensor0, (np.ndarray, np.number)):
         raise TypeError(
             f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
         )
-    if not isinstance(tensor1, np.ndarray):
+    if not isinstance(tensor0, (np.ndarray, np.number)):
         raise TypeError(
             f"Invalid type found inside tensor {node.inputs[1]}, got {type(tensor1)}"
         )
@@ -592,7 +599,7 @@ def inputs_binary_ops(graph, node) -> tuple[np.ndarray, np.ndarray]:
 def inputs_unary_ops(graph, node) -> np.ndarray:
     tensor0 = graph.nodes[node.inputs[0]].computed_tensor
 
-    if not isinstance(tensor0, np.ndarray):
+    if not isinstance(tensor0, (np.ndarray, np.number)):
         raise TypeError(
             f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
         )
@@ -626,12 +633,20 @@ def executor(graph: Graph):
             node.computed_tensor = np.exp(tensor0)
 
         elif node.op == Ops.SUM:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
+            tensor0 = inputs_unary_ops(graph, node)
 
             keepdims = node.op_kwargs.get("keepdims")
             axis = node.op_kwargs.get("axis")
 
-            node.computed_tensor = np.sum(tensor0, axis=axis, keepdims=keepdims)
+            node.computed_tensor = np.array(np.sum(tensor0, axis=axis, keepdims=keepdims))
+
+        elif node.op == Ops.MAX:
+            tensor0 = inputs_unary_ops(graph, node)
+
+            keepdims = node.op_kwargs.get("keepdims")
+            axis = node.op_kwargs.get("axis")
+
+            node.computed_tensor = np.max(tensor0, axis=axis, keepdims=keepdims)
 
         elif node.op == Ops.POW:
             tensor0, tensor1 = inputs_binary_ops(graph, node)
@@ -663,6 +678,10 @@ def executor(graph: Graph):
             axes = node.op_kwargs.get("axes")
 
             node.computed_tensor = np.transpose(tensor0, axes=axes)
+
+        elif node.op == Ops.RELU:
+            tensor0 = inputs_unary_ops(graph, node)
+            node.computed_tensor = np.maximum(0, tensor0)
 
         else:
             raise RuntimeError(f"Op {node.op} not supported")

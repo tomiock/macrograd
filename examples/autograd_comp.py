@@ -1,16 +1,23 @@
 from macrograd import Tensor, Graph
 
 from numpy.random import randn
+import numpy as np
 
 from macrograd.engine import topo_sort
 
-g = Graph()
 
-data = Tensor(randn(2,).tolist(), graph=g)
-weight = Tensor(randn(2, 2).tolist(), graph=g, requires_grad=True)
-bias = Tensor(randn(2,).tolist(), graph=g, requires_grad=True)
+data_array = randn(2, 10)
+weight_array = randn(2, 2)
+bias_array = randn(2,1)
 
-x = (data @ weight) + bias
-g.realize()
+for i in range(10):
+    g = Graph()
+    data = Tensor(data_array.tolist(), graph=g)
+    weight = Tensor(weight_array.tolist(), graph=g, requires_grad=True)
+    bias = Tensor(bias_array.tolist(), graph=g, requires_grad=True)
 
-x.backprop()
+    x = bias + (weight @ data)
+    g.realize()
+
+    x.backprop()
+    print(g)

@@ -61,30 +61,51 @@ def _calc_matmul_shape(
 ) -> tuple[int, ...]:
     ndim1 = len(shape1)
     ndim2 = len(shape2)
-    if ndim1 == 2 and ndim2 == 2:
-        # (m, k) * (k, n) -> (m, n)
-        if shape1[1] != shape2[0]:
-            raise ValueError
-        return (shape1[0], shape2[1])
 
-    elif ndim1 == 1 and ndim2 == 1:
+    if ndim1 == 0 or ndim2 == 0:
+        # TODO: fallback to `multiply`
+        raise ValueError(f"Use `mul` to deal with scalars, got shape {shape1} and {shape2}")
+
+    # vector x vector
+    if ndim1 == 1 and ndim2 == 1:
         # (k,) * (k,) -> float
         if shape1[0] != shape2[0]:
-            raise ValueError
+            raise ValueError(f"Missmatch of inner product vectors: {shape1} and {shape2}")
         return ()
 
-    elif ndim1 == 2 and ndim2 == 1:
-        # (m, k) * (k,) -> (m,)
-        if shape1[1] != shape2[0]:
-            raise ValueError
-        return (shape1[0],)
+    k1_dim = shape1[-1]
+    k2_dim = shape2[-2] if ndim2 >= 2 else shape2[-1]
 
+    print(k1_dim)
+    print(k2_dim)
+
+    if k1_dim != k2_dim:
+        raise ValueError(f"Shape incompatibility for `matmul` between {shape1} and {shape2}")
+
+    batch_shape1 = shape1[:-1] if ndim1 == 1 else shape1[:-2]
+    batch_shape2 = shape2[:-1] if ndim2 == 1 else shape2[:-2]
+
+    try:
+        out_batch_shape = _calc_broadcast_shape(batch_shape1, batch_shape2)
+    except ValueError:
+        raise ValueError(f"Batch dimensions imcompatible in `matmul` for {shape1} and {shape2}")
+
+    out_shape = tuple()
+
+
+    if ndim1 >= 2 and ndim2 >= 2:
+        # (m, k) * (k, n) -> (m, n)
+        out_shape = (shape1[-2], shape2[-1])
+    elif ndim1 >= 2:
+        # (m, k) * (k,) -> (m,)
+        out_shape = (shape1[-2],)
     elif ndim1 == 1 and ndim2 == 2:
         # (k,) * (k,n) -> (n,)
-        if shape1[0] != shape2[0]:
-            raise ValueError
-        return (shape2[1],)
-    raise ValueError
+        out_shape = (shape2[-1],)
+    else:
+        raise RuntimeError("Internal error in shape inference with `matmul`")
+
+    return out_batch_shape + out_shape
 
 
 def _normalize_axis(
