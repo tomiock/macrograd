@@ -12,6 +12,129 @@ def my_function(x, y):
     return (x @ y).sum()
 
 
+class TestForwardPass(unittest.TestCase):
+
+    def setUp(self):
+        """Ensure a fresh graph for each test."""
+        # Important if using a global default graph context
+        self.g = Graph()
+
+    def test_forward_mlp_layer_like(self):
+        """Tests MatMul, Add (broadcasting), and ReLU."""
+        print("\nRunning Test: test_forward_mlp_layer_like") # Optional progress indicator
+
+        # --- Inputs ---
+        batch_size, in_features, hidden_features = 4, 10, 8
+        x_np = np.random.randn(batch_size, in_features).astype(np.float32)
+        w_np = np.random.randn(in_features, hidden_features).astype(np.float32)
+        b_np = np.random.randn(hidden_features).astype(np.float32) # Bias (broadcastable)
+
+        # --- NumPy Reference Calculation ---
+        expected_z = np.maximum(0, (x_np @ w_np) + b_np) # Matmul -> Broadcast Add -> ReLU
+
+        # --- Framework Calculation ---
+        # Use .tolist() if Tensor init requires it, otherwise pass np array directly
+        x_var = Tensor(x_np, graph=self.g)
+        w_var = Tensor(w_np, graph=self.g)
+        b_var = Tensor(b_np, graph=self.g)
+
+        z_var = (x_var @ w_var + b_var).relu() # Chain operations
+
+        # Execute the graph
+        self.g.realize() # Or your executor(self.g) call
+
+        # Get the result
+        framework_result = z_var.data # Assumes .data holds the numpy array
+
+        # --- Assertions ---
+        self.assertIsNotNone(framework_result, "Framework result should not be None")
+        self.assertEqual(framework_result.shape, expected_z.shape, "Shape mismatch")
+        self.assertTrue(
+            allclose(framework_result, expected_z, atol=1e-6), # Adjust tolerance if needed
+            f"MLP-like forward pass failed:\nFramework:\n{framework_result}\nNumPy:\n{expected_z}"
+        )
+        print("Test PASSED")
+
+    def test_forward_softmax_like(self):
+        """Tests Exp, Sum (with axis, keepdims), and element-wise division."""
+        print("\nRunning Test: test_forward_softmax_like") # Optional
+
+        # --- Inputs ---
+        batch_size, num_classes = 3, 5
+        logits_np = np.random.randn(batch_size, num_classes).astype(np.float32)
+
+        # --- NumPy Reference Calculation ---
+        exp_logits = np.exp(logits_np)
+        sum_exp_logits = np.sum(exp_logits, axis=1, keepdims=True)
+        expected_softmax = exp_logits / sum_exp_logits
+
+        # --- Framework Calculation ---
+        logits_var = Tensor(logits_np, graph=self.g)
+
+        exp_logits_var = logits_var.exp()
+        # Ensure your Tensor.sum() passes axis and keepdims correctly
+        sum_exp_logits_var = exp_logits_var.sum(axis=1, keepdims=True)
+        # Ensure your Tensor.__truediv__ (or __div__) exists and maps to Ops.DIV or Ops.MUL/Ops.POW
+        softmax_var = exp_logits_var / sum_exp_logits_var
+
+        # Execute the graph
+        self.g.realize()
+
+        # Get the result
+        framework_result = softmax_var.data
+
+         # --- Assertions ---
+        self.assertIsNotNone(framework_result, "Framework result should not be None")
+        self.assertEqual(framework_result.shape, expected_softmax.shape, "Shape mismatch")
+        self.assertTrue(
+            allclose(framework_result, expected_softmax, atol=1e-6),
+            f"Softmax-like forward pass failed:\nFramework:\n{framework_result}\nNumPy:\n{expected_softmax}"
+        )
+        print("Test PASSED")
+
+    def test_forward_shape_ops_combo(self):
+        """Tests Add (broadcasting), Transpose, Reshape, ReLU."""
+        print("\nRunning Test: test_forward_shape_ops_combo") # Optional
+
+        # --- Inputs ---
+        B, H, W = 2, 3, 4
+        a_np = np.random.randn(B, H, W).astype(np.float32)
+        b_np = np.random.randn(W).astype(np.float32) # Broadcastable bias
+        target_reshape = (B, W * H) # Target shape for reshape
+
+        # --- NumPy Reference Calculation ---
+        c_np = a_np + b_np # Broadcast add -> (B, H, W)
+        d_np = c_np.transpose((0, 2, 1)) # Transpose -> (B, W, H)
+        e_np = d_np.reshape(target_reshape) # Reshape -> (B, W*H)
+        expected_z = np.maximum(0, e_np) # ReLU -> (B, W*H)
+
+        # --- Framework Calculation ---
+        a_var = Tensor(a_np, graph=self.g)
+        b_var = Tensor(b_np, graph=self.g)
+
+        c_var = a_var + b_var
+        # Ensure .transpose() method exists and takes axes tuple
+        d_var = c_var.transpose((0, 2, 1))
+         # Ensure .reshape() method exists and takes target shape
+        e_var = d_var.reshape(target_reshape)
+        z_var = e_var.relu()
+
+        # Execute the graph
+        self.g.realize()
+
+        # Get the result
+        framework_result = z_var.data
+
+         # --- Assertions ---
+        self.assertIsNotNone(framework_result, "Framework result should not be None")
+        self.assertEqual(framework_result.shape, expected_z.shape, "Shape mismatch")
+        self.assertTrue(
+            allclose(framework_result, expected_z, atol=1e-6),
+            f"Shape Ops combo forward pass failed:\nFramework:\n{framework_result}\nNumPy:\n{expected_z}"
+        )
+        print("Test PASSED")
+
+
 class TestAutogradEquivalence(unittest.TestCase):
     def test_matmul_sum(self):
         # Create the input arrays (using autograd's NumPy)
@@ -223,15 +346,6 @@ class TestAutogradEquivalence(unittest.TestCase):
         g.realize()
         z_var.backprop()
 
-        print(z_var.data)
-
-        print(f"{b_var.grad = }")
-        print(f"{grad_b_autograd = }")
-        print()
-
-        print(f"{a_var.grad = }")
-        print(f"{grad_a_autograd = }")
-
         self.assertTrue(allclose(a_var.grad, grad_a_autograd))
         self.assertTrue(allclose(b_var.grad, grad_b_autograd))
 
@@ -348,7 +462,6 @@ class TestAutogradEquivalence(unittest.TestCase):
         axis_to_reduce = 1
 
         grad_a_autograd = grad(lambda x: x.max(axis=axis_to_reduce).sum(), 0)(a_np)
-        print(grad_a_autograd)
 
         g = Graph()
         a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
@@ -358,7 +471,6 @@ class TestAutogradEquivalence(unittest.TestCase):
         g.realize()
         z_var.backprop()
 
-        print(a_var.grad)
 
         self.assertTrue(
             allclose(a_var.grad, grad_a_autograd),

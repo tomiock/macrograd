@@ -76,9 +76,6 @@ def _calc_matmul_shape(
     k1_dim = shape1[-1]
     k2_dim = shape2[-2] if ndim2 >= 2 else shape2[-1]
 
-    print(k1_dim)
-    print(k2_dim)
-
     if k1_dim != k2_dim:
         raise ValueError(f"Shape incompatibility for `matmul` between {shape1} and {shape2}")
 

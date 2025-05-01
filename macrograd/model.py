@@ -1,15 +1,26 @@
 from typing import Optional
 import numpy as np
+from macrograd.engine import Graph, get_default_graph
 from macrograd.tensor import Tensor
 
 
 class Linear:
-    def __init__(self, in_dims, out_dims, initilization: Optional[str] = None):
+    def __init__(
+        self,
+        in_dims,
+        out_dims,
+        graph: Optional[Graph] = None,
+        initilization: Optional[str] = None,
+    ):
         self.in_dims = in_dims
         self.out_dims = out_dims
         self._w_shape = (in_dims, out_dims)
         self._b_shape = (1, out_dims)
         self.initilization = initilization
+
+        if graph is None:
+            graph = get_default_graph()
+        self.graph = graph
 
         self.w = None
         self.b = None
@@ -22,12 +33,14 @@ class Linear:
         self.w = Tensor(
             np.random.randn(*self._w_shape),
             requires_grad=True,
+            graph=self.graph,
         )
 
         # TODO: small positive, so everything moves to the linear side of the relu
         self.b = Tensor(
             np.zeros(self._b_shape),
             requires_grad=True,
+            graph=self.graph,
         )
 
         return [self.w, self.b]

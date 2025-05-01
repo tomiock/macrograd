@@ -3,7 +3,7 @@ from warnings import warn
 import numpy as np
 
 from typing import Hashable, Sequence, Optional
-from .engine import Graph, Ops, topo_sort, executor
+from .engine import Graph, Ops, topo_sort
 from .utils_shape import _normalize_axis
 
 
@@ -74,7 +74,7 @@ def _backward(graph: Graph, node_id: Hashable):
 
         for tensor in forward_input_tensors:
             # TODO: fix this
-            if not isinstance(tensor, (np.ndarray, np.float64, np.float32)):
+            if not isinstance(tensor, (np.ndarray, np.float32, np.float64)):
                 raise TypeError(
                     f"Need a `np.ndarray` stored on the nodes, got {type(tensor)}"
                 )
@@ -182,7 +182,7 @@ def _backward(graph: Graph, node_id: Hashable):
                 continue  # Need original shape
             grad0 = node.grad.reshape(input_node.shape)
             _accumulate_grad(graph, node.inputs[0], grad0)
-        
+
         elif node.op == Ops.RELU:
             if len(node.inputs) != 1:
                 continue
@@ -306,7 +306,6 @@ def grad_transpose(_data: np.ndarray, axes=None) -> np.ndarray:
 
 
 def grad_relu(_data: np.ndarray, arr: np.ndarray):
-    print(_data)
     return _data * arr.data > 0
 
 
@@ -318,7 +317,7 @@ def grad_max(
 ) -> np.ndarray:
     norm_axis = _normalize_axis(axis, arr.ndim)
     output_fwd = np.max(arr, axis=norm_axis, keepdims=True)
-    mask = (arr == output_fwd)
+    mask = arr == output_fwd
 
     num_max = np.sum(mask, axis=norm_axis, keepdims=True)
     num_max = np.where(num_max == 0, 1.0, num_max)

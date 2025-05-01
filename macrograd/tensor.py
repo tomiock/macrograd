@@ -3,9 +3,8 @@ from __future__ import annotations  # do not touch
 from typing import Hashable, Optional
 
 import numpy as np
-import numpy.typing as npt
 
-from macrograd.engine import get_default_graph, Ops, Graph, executor
+from macrograd.engine import get_default_graph, Ops, Graph, executor_numpy, NodeType
 from macrograd.backward import _backward
 
 type ArrayLike = int | float | np.ndarray | list
@@ -18,6 +17,7 @@ class Tensor:
         array: Optional[ArrayLike] = None,
         requires_grad=False,
         graph: Optional[Graph] = None,
+        node_type: Optional[str] = None,
         _node_id: Optional[Hashable] = None,
     ):
         self.node_id: Hashable
@@ -29,6 +29,11 @@ class Tensor:
 
         self.requires_grad = requires_grad
 
+        if node_type == 'param':
+            self.node_type = NodeType.PARAM
+        if node_type == 'data':
+            self.node_type = NodeType.DATA
+
         # handle input given
         if array is not None:
             if isinstance(array, np.ndarray):
@@ -39,11 +44,13 @@ class Tensor:
                 raise TypeError(
                     f"Input to tensor must be list, int, float or np.ndarray, got {type(array)}"
                 )
-            self.shape = self._data.shape
+
+            if node_type is None:
+                self.node_type = NodeType.CONST
 
             # create a CONST NODE
             self.node_id = self.graph.add_node(
-                op=Ops.CONST, input_ids=(), static_data=array, rg=self.requires_grad
+                op=Ops.CONST, input_ids=(), static_data=self._data, rg=self.requires_grad, node_type=self.node_type,
             )
             self.node = self.graph.nodes[self.node_id]
         else:
@@ -52,6 +59,7 @@ class Tensor:
                 self.node = self.graph.nodes[self.node_id]
             else:
                 raise TypeError("must provide data for const or node_id from operation")
+
 
     @property
     def grad(self):
@@ -62,11 +70,15 @@ class Tensor:
         self._data = self.node.computed_tensor
         return self._data
 
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.node.shape
+
     def realize(self):
         if self.node.op == Ops.CONST:
             return self.data
         else:
-            executor(self.graph)
+            executor_numpy(self.graph)
             self._data = self.node.computed_tensor
 
     def backprop(self):
@@ -76,7 +88,7 @@ class Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(array=other, graph=self.graph)
         rg = self.requires_grad or other.requires_grad
-        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id), rg=rg)
+        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id), rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -88,7 +100,7 @@ class Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(array=other, graph=self.graph)
         rg = self.requires_grad or other.requires_grad
-        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id), rg=rg)
+        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id), rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -101,7 +113,7 @@ class Tensor:
             exp = Tensor(array=exp, graph=self.graph)
 
         rg = self.requires_grad or exp.requires_grad
-        result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id), rg=rg)
+        result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id), rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -115,7 +127,7 @@ class Tensor:
 
         rg = self.requires_grad or other.requires_grad
         result_id = self.graph.add_node(
-            Ops.MATMUL, (self.node_id, other.node_id), rg=rg
+            Ops.MATMUL, (self.node_id, other.node_id), rg=rg,
         )
         result = Tensor(
             requires_grad=rg,
@@ -135,7 +147,7 @@ class Tensor:
             kwargs["axes"] = axes
         rg = self.requires_grad
         result_id = self.graph.add_node(
-            Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs, rg=rg
+            Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs, rg=rg,
         )
         result = Tensor(
             requires_grad=rg,
@@ -150,7 +162,7 @@ class Tensor:
         kwargs["keepdims"] = keepdims
         rg = self.requires_grad
 
-        result_id = self.graph.add_node(Ops.MAX, (self.node_id,), kwargs=kwargs, rg=rg)
+        result_id = self.graph.add_node(Ops.MAX, (self.node_id,), kwargs=kwargs, rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -164,7 +176,7 @@ class Tensor:
         kwargs["keepdims"] = keepdims
         rg = self.requires_grad
 
-        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs, rg=rg)
+        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs, rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -174,7 +186,7 @@ class Tensor:
 
     def exp(self) -> Tensor:
         rg = self.requires_grad
-        result_id = self.graph.add_node(Ops.EXP, (self.node_id,), rg=rg)
+        result_id = self.graph.add_node(Ops.EXP, (self.node_id,), rg=rg,)
         result = Tensor(
             requires_grad=rg,
             _node_id=result_id,
@@ -185,7 +197,7 @@ class Tensor:
     def log(self, base: float | str = "e"):
         rg = self.requires_grad
         result_id = self.graph.add_node(
-            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}, rg=rg
+            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}, rg=rg,
         )
         result = Tensor(
             requires_grad=rg,

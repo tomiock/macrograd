@@ -1,4 +1,5 @@
 from __future__ import annotations
+from warnings import warn
 
 from math import prod
 from collections import defaultdict, deque
@@ -49,6 +50,13 @@ class Ops(FastEnum):
     CONST = auto()
 
 
+class NodeType(FastEnum):
+    COMPUTED = auto()
+    PARAM = auto()
+    DATA = auto()
+    CONST = auto()
+
+
 class Type(FastEnum):
     INT32 = 10
     INT64 = 20
@@ -93,6 +101,7 @@ def dtype2tensor_type(dtype: np.dtype):
 class Node:
     id: Hashable
     op: Ops
+    type: NodeType
     inputs: tuple[Hashable, ...] = field(default_factory=tuple)
     successors: set[Hashable] = field(default_factory=set)
     shape: tuple[int, ...] = tuple()
@@ -152,6 +161,7 @@ class Graph:
     def __init__(self):
         # the order here is the order of creation
         self.nodes: dict[Hashable, Node] = {}
+        self.i_am_frozen = False
         self._op_counters: dict[str, int] = defaultdict(int)
 
     def _get_next_id(self, op_name: str) -> str:
@@ -164,18 +174,29 @@ class Graph:
         return new_id
 
     def realize(self) -> None:
-        executor(self)
+        executor_numpy(self)
+
+    def freeze(self) -> None:
+        print("[Graph] The graph is frozen, cannot add more nodes to it")
+        self.i_am_frozen = True
 
     def add_node(
         self,
         op: Ops,
         input_ids: tuple[Hashable, ...],
+        node_type: NodeType = NodeType.COMPUTED,
         rg: bool = False,
         # supported: float, int, list, ndarray
         static_data: Any = None,
         kwargs: Optional[dict[str, Any]] = None,
     ) -> Hashable:
         new_id = self._get_next_id(op.name)
+
+        if self.i_am_frozen:
+            warn(
+                "was asked to add a node to myself. since i am frozen, i cannot do that."
+            )
+            return
 
         # TODO: shape inference
 
@@ -445,6 +466,7 @@ class Graph:
         node = Node(
             id=new_id,
             op=op,
+            type=node_type,
             inputs=input_ids,
             shape=inf_shape,
             dtype=inf_dtype,
@@ -504,9 +526,9 @@ class Graph:
             # Create a multi-line label for the node
 
             if node.op_kwargs:
-                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nrg:{node.requires_grad}\nkwargs:\n{node.op_kwargs}"
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\n{node.type}\ndtype: {node.dtype}\nrg:{node.requires_grad}\nkwargs:\n{node.op_kwargs}"
             else:
-                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\ndtype: {node.dtype}\nrg:{node.requires_grad}"
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\n{node.type}\ndtype: {node.dtype}\nrg:{node.requires_grad}"
 
             if node.op == Ops.CONST and node.computed_tensor is not None:
                 static_data_repr = repr(node.computed_tensor)
@@ -580,111 +602,137 @@ def topo_sort(graph_nodes: dict[Hashable, Node]) -> list[Hashable]:
     return result
 
 
-def inputs_binary_ops(graph, node) -> tuple[np.ndarray, np.ndarray]:
-    tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-    tensor1 = graph.nodes[node.inputs[1]].computed_tensor
+def allocate_buffers(g: Graph, backend="numpy"):
+    if not g.i_am_frozen:
+        warn("Allocating buffers to nodes of a graph that has not been frozen")
 
-    if not isinstance(tensor0, (np.ndarray, np.number)):
-        raise TypeError(
-            f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
-        )
-    if not isinstance(tensor0, (np.ndarray, np.number)):
-        raise TypeError(
-            f"Invalid type found inside tensor {node.inputs[1]}, got {type(tensor1)}"
-        )
-
-    return tensor0, tensor1
-
-
-def inputs_unary_ops(graph, node) -> np.ndarray:
-    tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-
-    if not isinstance(tensor0, (np.ndarray, np.number)):
-        raise TypeError(
-            f"Invalid type found inside tensor {node.inputs[0]}, got {type(tensor0)}"
+    if backend == "numpy":
+        import numpy as xp
+    elif backend == "cupy":
+        try:
+            import cupy as xp
+        except ImportError:
+            raise ImportError(
+                "Cupy is not install, consider using the `numpy` backend instead"
+            )
+    else:
+        raise ValueError(
+            "Unsuported backend provided, must be either `numpy` or `cupy`"
         )
 
-    return tensor0
+    raise NotImplementedError
 
 
-def executor(graph: Graph):
+def _exec_add_np(inputs: tuple[np.ndarray, ...], op_kwargs: dict) -> np.ndarray:
+    tensor0, tensor1 = inputs
+    return np.add(tensor0, tensor1)
+
+
+def _exec_mul_np(inputs, op_kwargs) -> np.ndarray:
+    tensor0, tensor1 = inputs
+    return np.multiply(tensor0, tensor1)
+
+
+def _exec_exp_np(inputs, op_kwargs) -> np.ndarray:
+    (tensor0,) = inputs
+    return np.exp(tensor0)
+
+
+def _exec_sum_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    keepdims = op_kwargs.get("keepdims")
+    axis = op_kwargs.get("axis")
+    return np.array(np.sum(tensor0, axis=axis, keepdims=keepdims))
+
+
+def _exec_max_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    keepdims = op_kwargs.get("keepdims")
+    axis = op_kwargs.get("axis")
+    return np.array(np.max(tensor0, axis=axis, keepdims=keepdims))
+
+
+def _exec_pow_np(inputs, op_kwargs):
+    tensor0, exponent = inputs
+    return np.pow(tensor0, exponent)
+
+
+def _exec_log_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    base = op_kwargs.get("base")
+    if base == "e" or base is None:
+        return np.log(tensor0)
+    else:
+        return np.log(tensor0) / np.log(base)
+
+
+def _exec_matmul_np(inputs, op_kwargs):
+    tensor0, tensor1 = inputs
+    return np.matmul(tensor0, tensor1)
+
+
+def _exec_reshape_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    shape = op_kwargs.get("shape")
+    return np.reshape(tensor0, shape=shape)
+
+
+def _exec_transpose_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    axes = op_kwargs.get("axes")
+    return np.transpose(tensor0, axes=axes)
+
+
+def _exec_relu_np(inputs, op_kwargs):
+    (tensor0,) = inputs
+    return np.maximum(0, tensor0)
+
+
+NUMPY_EXECUTION_DISPATCH = {
+    Ops.ADD: _exec_add_np,
+    Ops.MUL: _exec_mul_np,
+    Ops.EXP: _exec_exp_np,
+    Ops.LOG: _exec_log_np,
+    Ops.SUM: _exec_sum_np,
+    Ops.MAX: _exec_max_np,
+    Ops.POW: _exec_pow_np,
+    Ops.MATMUL: _exec_matmul_np,
+    Ops.RESHAPE: _exec_reshape_np,
+    Ops.TRANSPOSE: _exec_transpose_np,
+    Ops.RELU: _exec_relu_np,
+}
+
+
+def executor_numpy(graph: Graph):
     exec_list = topo_sort(graph.nodes)
 
     for node_id in exec_list:
         node = graph.nodes[node_id]
 
-        if node.op == Ops.CONST:
-            # ensure we are working with arrays
-            node.computed_tensor = np.array(node.computed_tensor)
+        if node.op is None or node.op == Ops.CONST:
+            continue
 
-        elif node.op == Ops.ADD:
-            tensor0, tensor1 = inputs_binary_ops(graph, node)
+        try:
+            forward_input_tensor = [
+                graph.nodes[in_id].computed_tensor for in_id in node.inputs
+            ]
 
-            node.computed_tensor = np.add(tensor0, tensor1)
+            if any(t is None for t in forward_input_tensor):
+                raise ValueError(f"Missing input tensor data for {node.id}")
+        except (KeyError, ValueError):
+            raise RuntimeError(f"Error fetching the inputs for node {node.id}")
 
-        elif node.op == Ops.MUL:
-            tensor0, tensor1 = inputs_binary_ops(graph, node)
+        if node.op in NUMPY_EXECUTION_DISPATCH:
+            exec_fn = NUMPY_EXECUTION_DISPATCH[node.op]
+            try:
+                node.computed_tensor = exec_fn(
+                    tuple(forward_input_tensor), node.op_kwargs
+                )
 
-            node.computed_tensor = np.multiply(tensor0, tensor1)
-
-        elif node.op == Ops.EXP:
-            tensor0 = inputs_unary_ops(graph, node)
-
-            node.computed_tensor = np.exp(tensor0)
-
-        elif node.op == Ops.SUM:
-            tensor0 = inputs_unary_ops(graph, node)
-
-            keepdims = node.op_kwargs.get("keepdims")
-            axis = node.op_kwargs.get("axis")
-
-            node.computed_tensor = np.array(np.sum(tensor0, axis=axis, keepdims=keepdims))
-
-        elif node.op == Ops.MAX:
-            tensor0 = inputs_unary_ops(graph, node)
-
-            keepdims = node.op_kwargs.get("keepdims")
-            axis = node.op_kwargs.get("axis")
-
-            node.computed_tensor = np.max(tensor0, axis=axis, keepdims=keepdims)
-
-        elif node.op == Ops.POW:
-            tensor0, tensor1 = inputs_binary_ops(graph, node)
-
-            node.computed_tensor = np.pow(tensor0, tensor1)
-
-        elif node.op == Ops.LOG:
-            tensor0 = inputs_unary_ops(graph, node)
-            base = node.op_kwargs.get("base")
-
-            if base == "e" or base is None:
-                node.computed_tensor = np.log(tensor0)
-            else:
-                node.computed_tensor = np.log(tensor0) / np.log(base)
-
-        elif node.op == Ops.MATMUL:
-            tensor0, tensor1 = inputs_binary_ops(graph, node)
-
-            node.computed_tensor = np.matmul(tensor0, tensor1)
-
-        elif node.op == Ops.RESHAPE:
-            tensor0 = inputs_unary_ops(graph, node)
-            shape = node.op_kwargs.get("shape")
-
-            node.computed_tensor = np.reshape(tensor0, shape=shape)
-
-        elif node.op == Ops.TRANSPOSE:
-            tensor0 = inputs_unary_ops(graph, node)
-            axes = node.op_kwargs.get("axes")
-
-            node.computed_tensor = np.transpose(tensor0, axes=axes)
-
-        elif node.op == Ops.RELU:
-            tensor0 = inputs_unary_ops(graph, node)
-            node.computed_tensor = np.maximum(0, tensor0)
-
+            except Exception as e:
+                raise RuntimeError(f"Error on executor: {e}")
         else:
-            raise RuntimeError(f"Op {node.op} not supported")
+            raise NotImplementedError(f"Exec func not implemented for op {node.op}")
 
 
 def executor_cupy(graph: Graph) -> cp.ndarray:
