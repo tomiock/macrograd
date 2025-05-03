@@ -150,8 +150,8 @@ class TestAutogradEquivalence(unittest.TestCase):
         g = Graph()
 
         # Calculate using custom framework
-        a_var = Tensor(a, requires_grad=True, graph=g)
-        b_var = Tensor(b, requires_grad=True, graph=g)
+        a_var = Tensor(a,  graph=g, node_type='param')
+        b_var = Tensor(b,  graph=g, node_type='param')
         z_var = (a_var @ b_var).sum()
 
         # forward pass for the whole graph
@@ -175,7 +175,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         g = Graph()
 
         # Calculate using custom framework
-        a_var = Tensor(a, requires_grad=True, graph=g)
+        a_var = Tensor(a,  graph=g, node_type='param')
         b_var = Tensor(
             b, requires_grad=False, graph=g
         )  # this would be a parameters of the model
@@ -196,8 +196,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        a_var = Tensor(a.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b.tolist(),  graph=g, node_type='param')
         z_var = (a_var + b_var).sum()
 
         g.realize()
@@ -215,8 +215,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        a_var = Tensor(a.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b.tolist(),  graph=g, node_type='param')
         z_var = (a_var - b_var).sum()
 
         g.realize()
@@ -234,8 +234,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        a_var = Tensor(a.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b.tolist(),  graph=g, node_type='param')
         z_var = (a_var * b_var).sum()
 
         g.realize()
@@ -250,8 +250,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        x_var = Tensor(x_np.tolist(), requires_grad=True, graph=g)
-        y_var = Tensor(y_np.tolist(), requires_grad=True, graph=g)
+        x_var = Tensor(x_np.tolist(),  graph=g, node_type='param')
+        y_var = Tensor(y_np.tolist(),  graph=g, node_type='param')
         z_var = (x_var**y_var).sum()
 
         g.realize()
@@ -268,7 +268,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        x_var = Tensor(x_np.tolist(), requires_grad=True, graph=g)
+        x_var = Tensor(x_np.tolist(),  graph=g, node_type='param')
         z_var = x_var.T.sum()
 
         g.realize()
@@ -282,7 +282,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         g = Graph()
 
-        x_var = Tensor(x_np.tolist(), requires_grad=True, graph=g)
+        x_var = Tensor(x_np.tolist(),  graph=g, node_type='param')
         sqrt_var = x_var.sqrt()
         z_var = sqrt_var.sum()
 
@@ -301,7 +301,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         # Your framework calculation
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         # Assuming Tensor.sum() maps to Ops.SUM and takes axis/keepdims
         sum_res = a_var.sum(axis=1, keepdims=False)  # Result shape (2,)
         z_var = sum_res.sum()  # Result shape ()
@@ -320,7 +320,7 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         # Your framework calculation
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         sum_res = a_var.sum(axis=1, keepdims=True)  # Result shape (2, 1)
         z_var = sum_res.sum()  # Result shape ()
 
@@ -339,8 +339,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         # Your framework calculation
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b_np.tolist(),  graph=g, node_type='param')
         z_var = (a_var + b_var).sum()  # Broadcasting happens in '+'
 
         g.realize()
@@ -361,8 +361,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         # Your framework calculation
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b_np.tolist(),  graph=g, node_type='param')
         z_var = (a_var * b_var).sum()  # Broadcasting happens in '*'
 
         g.realize()
@@ -377,8 +377,8 @@ class TestAutogradEquivalence(unittest.TestCase):
 
         # Your framework calculation
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
-        b_var = Tensor(b_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
+        b_var = Tensor(b_np.tolist(),  graph=g, node_type='param')
         z_var = (a_var.T @ b_var).sum()  # Uses batched matmul
 
         g.realize()
@@ -399,7 +399,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda x: np.exp(x).sum(), 0)(a_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         z_var = a_var.exp().sum()  # Assumes .exp() method exists and maps to Ops.EXP
 
         g.realize()
@@ -415,7 +415,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda x: np.log(x).sum(), 0)(a_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         z_var = a_var.log().sum()  # Assumes .log() method exists (natural log)
 
         g.realize()
@@ -430,7 +430,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda x: np.log2(x).sum(), 0)(a_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         z_var = a_var.log(base=base).sum()  # Assumes .log() method exists (natural log)
 
         g.realize()
@@ -446,7 +446,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda x: x.reshape(target_shape).sum(), 0)(a_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         # Assumes .reshape() method exists and maps to Ops.RESHAPE
         z_var = a_var.reshape(target_shape).sum()
 
@@ -464,7 +464,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda x: x.max(axis=axis_to_reduce).sum(), 0)(a_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         # Assumes .max() method exists
         z_var = a_var.max(axis=axis_to_reduce, keepdims=False).sum()
 
@@ -485,11 +485,11 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_a_autograd = grad(lambda a, b, c: (a * b) + (a * c), 0)(a_np, b_np, c_np)
 
         g = Graph()
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
         b_var = Tensor(
-            b_np.tolist(), requires_grad=False, graph=g
+            b_np.tolist(), requires_grad=False, graph=g, node_type='param',
         )  # Treat b, c as constants
-        c_var = Tensor(c_np.tolist(), requires_grad=False, graph=g)
+        c_var = Tensor(c_np.tolist(), requires_grad=False, graph=g, node_type='param')
 
         y = a_var * b_var  # First use of a_var
         z = a_var * c_var  # Second use of a_var
@@ -511,7 +511,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         # Autograd doesn't compute grad w.r.t Python scalars
 
         g = Graph()
-        x_var = Tensor(x_np.tolist(), requires_grad=True, graph=g)
+        x_var = Tensor(x_np.tolist(),  graph=g, node_type='param')
         # Use the overloaded operator with a Python scalar
         z_var = (x_var**exponent).sum()
 
@@ -544,7 +544,7 @@ class TestAutogradEquivalence(unittest.TestCase):
         grad_autograd_modified[point_5_mask] = 0.
 
         g = Graph()  # New graph for the test
-        a_var = Tensor(a_np.tolist(), requires_grad=True, graph=g)
+        a_var = Tensor(a_np.tolist(),  graph=g, node_type='param')
 
         z_var = a_var.relu().sum()
 

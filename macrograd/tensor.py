@@ -31,6 +31,7 @@ class Tensor:
 
         if node_type == 'param':
             self.node_type = NodeType.PARAM
+            self.requires_grad = True
         if node_type == 'data':
             self.node_type = NodeType.DATA
 

@@ -39,6 +39,7 @@ def _accumulate_grad(graph: Graph, node_id: Hashable, grad_contribution: np.ndar
 
 
 def _backward(graph: Graph, node_id: Hashable):
+    graph.freeze()
     forward_exec = topo_sort(graph.nodes)
 
     backward_exec = reversed(forward_exec)

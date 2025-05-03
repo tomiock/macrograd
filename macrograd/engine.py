@@ -174,6 +174,8 @@ class Graph:
         return new_id
 
     def realize(self) -> None:
+        #self.freeze()
+        self.allocate()
         executor_numpy(self)
 
     def freeze(self) -> None:
@@ -564,6 +566,9 @@ class Graph:
             )
             return None
 
+    def allocate(self, backend="numpy"):
+        _allocate_buffers(self, backend)
+
 
 def topo_sort(graph_nodes: dict[Hashable, Node]) -> list[Hashable]:
     in_degree: dict[Hashable, int] = defaultdict(int)
@@ -602,10 +607,7 @@ def topo_sort(graph_nodes: dict[Hashable, Node]) -> list[Hashable]:
     return result
 
 
-def allocate_buffers(g: Graph, backend="numpy"):
-    if not g.i_am_frozen:
-        warn("Allocating buffers to nodes of a graph that has not been frozen")
-
+def _allocate_buffers(g: Graph, backend="numpy"):
     if backend == "numpy":
         import numpy as xp
     elif backend == "cupy":
@@ -620,7 +622,33 @@ def allocate_buffers(g: Graph, backend="numpy"):
             "Unsuported backend provided, must be either `numpy` or `cupy`"
         )
 
-    raise NotImplementedError
+    for node in g.nodes.values():
+        if node.type == NodeType.CONST:
+            value = node.computed_tensor
+            if value is None:
+                raise RuntimeError("Node `const` has no value in it")
+            # TODO: handle type
+            node.requires_grad = False
+        elif node.type in (NodeType.DATA, NodeType.PARAM, NodeType.COMPUTED):
+            if node.shape is None:
+                raise RuntimeError(
+                    "Cannot allocate buffer to node because no shape was provided"
+                )
+            # TODO: handle type
+            if node.computed_tensor is None:
+                node.computed_tensor = xp.empty(node.shape)
+        else:
+            raise RuntimeError(f"Unexpected node type encountered: {node.type}")
+
+        if node.requires_grad:
+            if node.shape is None:
+                raise RuntimeError(
+                    "Cannot allocate buffer to node because no shape was provided"
+                )
+            if node.grad is None:
+                node.grad = xp.zeros(node.shape)
+        else:
+            node.grad = None
 
 
 def _exec_add_np(inputs: tuple[np.ndarray, ...], op_kwargs: dict) -> np.ndarray:
@@ -733,74 +761,3 @@ def executor_numpy(graph: Graph):
                 raise RuntimeError(f"Error on executor: {e}")
         else:
             raise NotImplementedError(f"Exec func not implemented for op {node.op}")
-
-
-def executor_cupy(graph: Graph) -> cp.ndarray:
-    exec_list = topo_sort(graph.nodes)
-
-    for node_id in exec_list:
-        node = graph.nodes[node_id]
-
-        if node.op == Ops.CONST:
-            node.computed_tensor = cp.array(node.computed_tensor)
-
-        elif node.op == Ops.ADD:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
-
-            node.computed_tensor = cp.add(tensor0, tensor1)
-
-        elif node.op == Ops.MUL:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
-
-            node.computed_tensor = cp.multiply(tensor0, tensor1)
-
-        elif node.op == Ops.EXP:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-
-            node.computed_tensor = cp.exp(tensor0)
-
-        elif node.op == Ops.SUM:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-
-            keepdims = node.op_kwargs.get("keepdims")
-            axis = node.op_kwargs.get("axis")
-
-            node.computed_tensor = cp.sum(tensor0, axis=axis, keepdims=keepdims)
-
-        elif node.op == Ops.POW:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
-
-            node.computed_tensor = cp.pow(tensor0, tensor1)
-
-        elif node.op == Ops.LOG:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            base = node.op_kwargs.get("base")
-
-            if base == "e":
-                node.computed_tensor = cp.log(tensor0)
-            else:
-                node.computed_tensor = cp.log(tensor0) / cp.log(base)
-
-        elif node.op == Ops.MATMUL:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            tensor1 = graph.nodes[node.inputs[1]].computed_tensor
-
-            node.computed_tensor = cp.matmul(tensor0, tensor1)
-
-        elif node.op == Ops.RESHAPE:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            shape = node.op_kwargs.get("shape")
-
-            node.computed_tensor = cp.reshape(tensor0, shape=shape)
-
-        elif node.op == Ops.TRANSPOSE:
-            tensor0 = graph.nodes[node.inputs[0]].computed_tensor
-            axes = node.op_kwargs.get("axes")
-
-            node.computed_tensor = cp.transpose(tensor0, axes=axes)
-
-        else:
-            raise RuntimeError(f"Op {node.op} not supported")
