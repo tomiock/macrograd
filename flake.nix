@@ -52,6 +52,7 @@ EOF
         '';
             in
                 {
+                allowUnfree = true;
                 devShells.default = pkgs.mkShell {
                     packages = with pkgs; [
 
@@ -62,7 +63,6 @@ EOF
                         pythonPackages.torch
                         pythonPackages.torchvision
                         pythonPackages.pytest
-                        pythonPackages.mlflow
                         pythonPackages.autograd
                         pythonPackages.graphviz
                         pythonPackages.pandas

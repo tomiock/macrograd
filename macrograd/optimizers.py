@@ -147,8 +147,6 @@ class SGD_Momentum:
         return param
 
     def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-        for param in params:
-            param.zero_grad()
 
         loss.backprop()
 

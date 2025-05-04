@@ -1,11 +1,9 @@
-import mlflow
 import numpy as np
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 from macrograd.model import Model, Linear
-from macrograd.optimizers import LinearScheduler, SGD_Momentum, StepScheduler
-from macrograd.functions import relu, softmax, cross_entropy
+from macrograd.optimizers import SGD_Momentum
+from macrograd.functions import relu
 from macrograd import Tensor
 
 import torchvision
@@ -83,6 +81,15 @@ def evaluate_model(model, test_minibatches):
     return accuracy
 
 
+def softmax(x: Tensor):
+    e_x = x.exp()
+    return e_x / (e_x.sum(axis=1, keepdims=True))
+
+
+def cross_entropy(y_true, y_pred):
+    return -1 * (y_true * log2(y_pred)).sum() / y_true.data.shape[0]
+
+
 train_set = torchvision.datasets.MNIST(".data/", train=True, download=True)
 test_set = torchvision.datasets.MNIST(".data/", train=False, download=True)
 
@@ -91,7 +98,9 @@ test_dataset = MNIST_dataset(test_set, partition="test")
 
 batch_size = 10
 num_samples = None
-train_minibatches = create_minibatches(train_dataset, batch_size, num_samples=num_samples)
+train_minibatches = create_minibatches(
+    train_dataset, batch_size, num_samples=num_samples
+)
 test_minibatches = create_minibatches(test_dataset, batch_size)
 
 
@@ -119,6 +128,7 @@ class MNIST_model(Model):
 
         return data
 
+
 mlflow.set_tracking_uri("http://atenea:5000")
 
 model = MNIST_model(784, 10)
@@ -128,12 +138,12 @@ parameters = model.init_params()
 epochs = 10
 learning_rate = 0.02
 optimizer = SGD_Momentum(parameters, learning_rate, alpha=0.8)
-#scheduler = LinearScheduler(total_iter=8, target_lr=.0001)
+# scheduler = LinearScheduler(total_iter=8, target_lr=.0001)
 
 hyper_params = {
     "epochs": epochs,
     "learning_rate": learning_rate,
-    "momentum": .8,
+    "momentum": 0.8,
     "batch_size": batch_size,
     "number_samples": num_samples,
     "optimizer": optimizer.__class__.__name__,
@@ -145,6 +155,7 @@ batch_loss_history = []
 lr_history = []
 
 mlflow.set_experiment("mnist-macrograd")
+
 
 def train_run(parameters):
     for epoch in range(epochs):
@@ -165,7 +176,7 @@ def train_run(parameters):
         epoch_loss_mean = float(np.mean(epoch_losses))
         mlflow.log_metric("train_loss", epoch_loss_mean, step=epoch)
 
-        #scheduler.step(optimizer)
+        # scheduler.step(optimizer)
         mlflow.log_metric("learning_rate", optimizer.lr, step=epoch)
     return parameters
 

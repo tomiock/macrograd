@@ -3,8 +3,6 @@ import numpy as np
 import time
 import unittest
 
-from macrograd.tensor import Tensor
-
 
 from macrograd import Tensor, e
 from macrograd.tensor import _to_var

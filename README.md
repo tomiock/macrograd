@@ -5,12 +5,91 @@ As opossed to the great coders of [micrograd](https://github.com/karpathy/microg
 > Just tryping to create an autograd framework, like any great ML engineer should do I guess. My goal would be to keep implementing things as I am learning them in class.
 
 ## Features
+- Eager Execution with Implicit Graph Creation
 - pseudo-pytorch interface for model creation (with a more functional style)
 - Numpy backend
 - Stochastic Gradient Descent with/without Momentum
 - MNIST with comparable pytorch performance
 
 ## Example
+
+### Grap Execution
+Everytime an operation is made on a `Tensor`, a new node is added into the implicit computational graph. To access the tensor data,
+the whole graph needs to be computed, either by calling `realize()` on a `Tensor` or `Graph`.
+
+A default graph is created if none is specified when calling `Tensor`. No need to handle manually handle a graph everytime:
+```python
+from macrograd import Tensor
+
+def softmax(x: Tensor) -> Tensor:
+    e_x = x.exp()
+    return e_x / (e_x.sum(axis=1, keepdims=True))
+
+my_tensor = Tensor(
+    [[1, 2, 3, 4],
+     [5, 6, 7, 8]])
+
+logits = softmax(my_tensor)
+logits.realize() # execture the graph
+# would be the same as `logits.graph.realize()`
+
+# access the computed tensor
+logits.data
+# >>> [[0.0320586  0.08714432 0.23688282 0.64391426]
+# >>> [0.0320586  0.08714432 0.23688282 0.64391426]]
+```
+
+You access the default graph using `get_default_graph()`:
+```python
+from macrograd import Tensor
+from macrograd.engine import get_default_graph
+
+
+default_graph = get_default_graph()
+
+my_tensor = Tensor(
+    [[1, 2, 3, 4],
+     [5, 6, 7, 8]])
+
+logits = softmax(my_tensor)
+
+# the whole graph is executed
+default_graph.realize()
+
+# access the computed tensor
+logits.data
+# >>> [[0.0320586  0.08714432 0.23688282 0.64391426]
+# >>> [0.0320586  0.08714432 0.23688282 0.64391426]]
+```
+
+A custom graph can also be created by calling `Graph`, just passed as an argument into a tensor.
+All successors of that tensor will be nodes on that graph.
+```python
+from macrograd import Tensor
+from macrograd.engine import Graph
+
+my_graph = Graph() # create a custom graph
+my_tensor = Tensor(
+    [[1, 2, 3, 4], [5, 6, 7, 8]],
+    graph=my_graph, # pass the graph as an argument
+)
+
+logits = softmax(my_tensor)
+
+# the whole graph is executed
+my_graph.realize()
+
+# access the computed tensor
+logits.data
+# >>> [[0.0320586  0.08714432 0.23688282 0.64391426]
+# >>> [0.0320586  0.08714432 0.23688282 0.64391426]]
+```
+
+The graph can be visualized using `graphviz` by calling `Graph.visualized()` on any graph. This would be graph associated with the softmax function used before:
+
+<img src="https://github.com/user-attachments/assets/b331564b-935e-4118-97f9-3d6fdcd13ff9" widht='600' height='600'>
+All necessary information to execute the operations is saved on the graph.
+
 
 ### MNIST
 Multiclass MNIST Classification with 97% accuracy on test set with 2 or 1 epochs (60k train images)

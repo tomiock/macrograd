@@ -2,46 +2,48 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
+from tqdm import tqdm
+
 from macrograd import Tensor
+from macrograd.engine import Graph, get_default_graph
 
 m = 100  # number of training points
 w_true = [-1.0, 2.0, 1.0]  # True weights
 
 XX = 4 * np.random.rand(m) - 2
-#XX = np.array([1, 2])
 YY = w_true[0] + w_true[1] * XX + w_true[2] * (XX**2)
-#YY += np.random.normal(scale=0.3, size=YY.size)
 
 # Initialize weights
-w = Tensor(np.random.normal(size=(3, 1)), requires_grad=True)  # 3x1 vector
-#w = Tensor([[1.], [2.], [1.]], requires_grad=True)  # 3x1 vector
-
+w_array = np.random.normal(size=(3, 1))
 
 lr = 0.01
-epochs = 1000
+epochs = 100
 training_loss = []
 batch_loss = 0
 
 t = time.time()
 
-for _ in range(epochs):
-    w.zero_grad()
+for _ in tqdm(range(epochs)):
+    g = Graph()
+    X = Tensor(np.stack([np.ones(m), XX, XX**2], axis=1), requires_grad=False, graph=g)
+    y = Tensor(YY.reshape(-1, 1), requires_grad=False, graph=g)
+    w = Tensor(w_array, requires_grad=True)
+    print(w.shape)
 
     batch_loss = 0
-    X = Tensor(np.stack([np.ones(m), XX, XX**2], axis=1), requires_grad=False)
-    y = Tensor(YY.reshape(-1, 1), requires_grad=False)
 
     out = X @ w
+
     loss = ((out - y) ** 2).sum()
 
-    #visualize_graph(loss, filename='poly_reg')
+    print(loss.data)
+    loss.realize()
 
     loss.backprop()  # Use backprop
-    batch_loss += loss.data
 
-    training_loss.append(batch_loss)
 
-    w = w - lr * w.grad / m
+print(w)
+print(g)
 
 print("Training took (secs):", time.time() - t)
 

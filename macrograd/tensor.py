@@ -1,523 +1,281 @@
-from dataclasses import dataclass
-import graphviz
-from collections.abc import Callable
-from typing import Optional
+from __future__ import annotations  # do not touch
+
+from typing import Hashable, Optional
+
 import numpy as np
-import numpy.typing as npt
 
-import numba as nb
+from macrograd.engine import get_default_graph, Ops, Graph, executor_numpy, NodeType
+from macrograd.backward import _backward
 
-type ArrayLike = int | float | np.ndarray | list | tuple
+type ArrayLike = int | float | np.ndarray | list
 type TensorLike = Tensor | int | float | np.ndarray | list
-
-
-def _to_var(x: TensorLike) -> "Tensor":
-    if isinstance(x, Tensor):
-        return x
-    else:
-        return Tensor(np.array(x))
-
-
-@dataclass
-class Node:
-    label: str
-    op: str
-    shape: tuple
-    grad: bool
-    param: Optional[bool]
 
 
 class Tensor:
     def __init__(
         self,
-        array: ArrayLike,
+        array: Optional[ArrayLike] = None,
         requires_grad=False,
-        precision=np.float32,
-        _op="",
-        label=None,
+        graph: Optional[Graph] = None,
+        node_type: Optional[str] = None,
+        _node_id: Optional[Hashable] = None,
     ):
-        self.requires_grad = requires_grad
-        # only for gradient calculation
-        self.parents: set[tuple[Tensor, Optional[Callable]]] = set()
-        self.data = np.array(array, dtype=precision)
-        self.dim = self.data.ndim
-        self.shape = self.data.shape
-        self._grad: npt.ArrayLike | None = None
-        self._op = _op
-        self._nodes_edges: set = set()  # "copy" of the parents
-        if self.dim == 0:
-            self.label = str(self.data)
-        else:
-            if not label:
-                self.label = "X"
-            else:
-                self.param = True
-                self.label = label
+        self.node_id: Hashable
 
-        self._node_info = Node(
-            label=self.label,
-            op=self._op,
-            shape=self.shape,
-            grad=self.requires_grad,
-            param=None,
-        )
+        if graph is None:
+            self.graph = get_default_graph()
+        else:
+            self.graph = graph
+
+        self.requires_grad = requires_grad
+
+        if node_type == 'param':
+            self.node_type = NodeType.PARAM
+            self.requires_grad = True
+        if node_type == 'data':
+            self.node_type = NodeType.DATA
+
+        # handle input given
+        if array is not None:
+            if isinstance(array, np.ndarray):
+                self._data = array
+            elif isinstance(array, (list, int, float)):
+                self._data = np.array(array)
+            else:
+                raise TypeError(
+                    f"Input to tensor must be list, int, float or np.ndarray, got {type(array)}"
+                )
+
+            if node_type is None:
+                self.node_type = NodeType.CONST
+
+            # create a CONST NODE
+            self.node_id = self.graph.add_node(
+                op=Ops.CONST, input_ids=(), static_data=self._data, rg=self.requires_grad, node_type=self.node_type,
+            )
+            self.node = self.graph.nodes[self.node_id]
+        else:
+            if _node_id is not None:
+                self.node_id = _node_id
+                self.node = self.graph.nodes[self.node_id]
+            else:
+                raise TypeError("must provide data for const or node_id from operation")
+
 
     @property
     def grad(self):
-        return self._grad
+        return self.node.grad
 
-    def zero_grad(self):
-        self._grad = tensor_zeros_like(self.data)
+    @property
+    def data(self):
+        self._data = self.node.computed_tensor
+        return self._data
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.node.shape
+
+    def realize(self):
+        if self.node.op == Ops.CONST:
+            return self.data
+        else:
+            executor_numpy(self.graph)
+            self._data = self.node.computed_tensor
 
     def backprop(self):
-        self._backward()
-        self.parents = set()
+        _backward(self.graph, self.node_id)
 
-    def __repr__(self) -> str:
-        return f"{self.data}, grad={self.grad}, shape={self.shape}, rgrad={self.requires_grad}"
-
-    def reshape(self, *args):
-        return Tensor(tensor_reshape(self.data, args), requires_grad=self.requires_grad)
-
-    def create_stack(self):
-        visited = set()
-        visit_stack = [self]
-        stack = []
-
-        while visit_stack:
-            node = visit_stack[-1]
-            all_parents_visited = True
-            for p_node, _ in node.parents:
-                if p_node not in visited:
-                    all_parents_visited = False
-                    visit_stack.append(p_node)
-                    break
-
-            if all_parents_visited:
-                visit_stack.pop(-1)
-                if node not in visited:
-                    visited.add(node)
-                    stack.append(node)
-        del visited
-        del visit_stack
-
-        return stack
-
-    def _backward(self, _value: np.ndarray = np.array(1.0)):
-        if not self.requires_grad:
-            return
-
-        stack = self.create_stack()
-        self._grad = _value
-
-        for node in reversed(stack):
-            if node.grad is None:
-                continue
-            for prev_node, local_grad_fn in node.parents:
-                if prev_node.requires_grad:
-                    if prev_node._grad is None:
-                        prev_node._grad = tensor_zeros(prev_node.shape)
-                    grad_delta = local_grad_fn(node._grad)
-                    if grad_delta.shape != prev_node._grad.shape:
-                        grad_delta = tensor_reshape(grad_delta, prev_node._grad.shape)
-                    prev_node._grad += grad_delta
-            node.parents = []
-
-    def _update_node_info(self, result: "Tensor", other: Optional["Tensor"] = None):
-        """Helper function to update _node_info after an operation."""
-        result._node_info = Node(
-            label=result.label,
-            op=result._op,
-            shape=result.shape,
-            grad=result.requires_grad,
-            param=None,
-        )
-        if other is not None:  # Binary operation
-            result._node_info.param = True
-            self._node_info.param = True
-
-    def __add__(self, other: TensorLike) -> "Tensor":
-        other = _to_var(other)
-        assert type(other.data) is np.ndarray
-        assert type(self.data) is np.ndarray
+    def __add__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other, graph=self.graph)
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(Ops.ADD, (self.node_id, other.node_id), rg=rg,)
         result = Tensor(
-            tensor_add(self.data, other.data),
-            requires_grad=(self.requires_grad or other.requires_grad),
-            _op="add",
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if self.requires_grad:
-            # Pass arrays to the external gradient function.
-
-            def _calc_grad_add_self(x):
-                return grad_add(x, self.data)
-
-            result.parents.add((self, _calc_grad_add_self))
-        if other.requires_grad:
-
-            def _calc_grad_add_other(x):
-                return grad_add(x, other.data)
-
-            result.parents.add((other, _calc_grad_add_other))
-
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(other)
-        self._update_node_info(result, other)  # Update after operation
-        # print(f"{result.shape} = {result._op}({self.shape}, {other.shape}")
         return result
 
-    def __radd__(self, other: TensorLike) -> "Tensor":
-        return _to_var(other) + self
-
-    def __sub__(self, other: TensorLike) -> "Tensor":
-        return self + (-_to_var(other))
-
-    def __rsub__(self, other: TensorLike) -> "Tensor":
-        return _to_var(other) + (-self)
-
-    def __mul__(self, other: TensorLike) -> "Tensor":
-        other = _to_var(other)
-        assert type(other.data) is np.ndarray
-        assert type(self.data) is np.ndarray
+    def __mul__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other, graph=self.graph)
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(Ops.MUL, (self.node_id, other.node_id), rg=rg,)
         result = Tensor(
-            tensor_mul(self.data, other.data),
-            requires_grad=(self.requires_grad or other.requires_grad),
-            _op="mul",
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if self.requires_grad:
-
-            def _calc_grad_mul_self(_value):
-                return grad_mul(_value, self.data, other.data)
-
-            result.parents.add((self, _calc_grad_mul_self))
-        if other.requires_grad:
-
-            def _calc_grad_mul_other(_value):
-                return grad_mul(_value, other.data, self.data)
-
-            result.parents.add((other, _calc_grad_mul_other))
-
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(other)
-        # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
         return result
 
-    def __rmul__(self, other: TensorLike) -> "Tensor":
-        return _to_var(other) * self
+    def __pow__(self, exp: TensorLike) -> Tensor:
+        if not isinstance(exp, Tensor):
+            exp = Tensor(array=exp, graph=self.graph)
 
-    def __truediv__(self, other: TensorLike) -> "Tensor":
-        return self * (_to_var(other) ** np.array(-1.0))
-
-    def __rtruediv__(self, other: TensorLike) -> "Tensor":
-        return _to_var(other) * (self ** np.array(-1.0))
-
-    def __matmul__(self, other: TensorLike) -> "Tensor":
-        other = _to_var(other)
-        assert type(self.data) is np.ndarray
-        assert type(other.data) is np.ndarray
+        rg = self.requires_grad or exp.requires_grad
+        result_id = self.graph.add_node(Ops.POW, (self.node_id, exp.node_id), rg=rg,)
         result = Tensor(
-            tensor_matmul(self.data, other.data),
-            requires_grad=(self.requires_grad or other.requires_grad),
-            _op="matmul",
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if self.requires_grad:
-
-            def _calc_grad_matmul_self(x):
-                return grad_matmul(x, self.data, other.data, is_a=True)
-
-            result.parents.add((self, _calc_grad_matmul_self))
-        if other.requires_grad:
-
-            def _calc_grad_matmul_other(x):
-                return grad_matmul(x, self.data, other.data, is_a=False)
-
-            result.parents.add((other, _calc_grad_matmul_other))
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(other)
-        # print(f"{result.shape} = {result._op}({self.label}, {other.label})")
         return result
 
-    def __rmatmul__(self, other: TensorLike) -> "Tensor":
-        return _to_var(other) @ self
+    def __matmul__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other, graph=self.graph)
 
-    def __neg__(self) -> "Tensor":
-        return self * -1.0
-
-    def __pow__(self, exponent: TensorLike) -> "Tensor":
-        exponent = _to_var(exponent)
-        assert type(self.data) is np.ndarray
-        assert type(exponent.data) is np.ndarray
-        result = Tensor(
-            tensor_pow(self.data, exponent.data),
-            requires_grad=(self.requires_grad or exponent.requires_grad),
-            _op="pow",
+        rg = self.requires_grad or other.requires_grad
+        result_id = self.graph.add_node(
+            Ops.MATMUL, (self.node_id, other.node_id), rg=rg,
         )
-        if self.requires_grad:
-
-            def _calc_grad_pow_self(x):
-                return grad_pow(x, self.data, exponent.data, is_a=True)
-
-            result.parents.add((self, _calc_grad_pow_self))
-        if exponent.requires_grad:
-
-            def _calc_grad_pow_other(x):
-                return grad_pow(x, self.data, exponent.data, is_a=False)
-
-            result.parents.add((exponent, _calc_grad_pow_other))
-        result._nodes_edges.add(self)
-        result._nodes_edges.add(exponent)
-        # print(f"{result.shape} = {result._op}({self.label}, {exponent.label})")
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
+        )
         return result
 
     @property
-    def T(self) -> "Tensor":
+    def T(self) -> Tensor:
+        result = self.transpose()
+        return result
+
+    def transpose(self, axes: Optional[tuple | list] = None) -> Tensor:
+        kwargs = dict()
+        if axes is not None:
+            kwargs["axes"] = axes
+        rg = self.requires_grad
+        result_id = self.graph.add_node(
+            Ops.TRANSPOSE, (self.node_id,), kwargs=kwargs, rg=rg,
+        )
         result = Tensor(
-            tensor_transpose(self.data), requires_grad=self.requires_grad, _op="T"
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if self.requires_grad:
-
-            def _calc_grad_transpose(x):
-                return grad_transpose(x)
-
-            result.parents.add((self, _calc_grad_transpose))
-        result._nodes_edges.add(self)
-        # print(f"{result.shape} = {result._op}({self.shape}")
         return result
 
-    def sqrt(self) -> "Tensor":
+    def max(self, axis=None, keepdims=False) -> Tensor:
+        kwargs = dict()
+        kwargs["axis"] = axis
+        kwargs["keepdims"] = keepdims
+        rg = self.requires_grad
+
+        result_id = self.graph.add_node(Ops.MAX, (self.node_id,), kwargs=kwargs, rg=rg,)
         result = Tensor(
-            tensor_sqrt(self.data), requires_grad=self.requires_grad, _op="sqrt"
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if self.requires_grad:
-
-            def _calc_grad_sqrt(x):
-                return grad_sqrt(x, self.data)
-
-            result.parents.add((self, _calc_grad_sqrt))
-        result._nodes_edges.add(self)
-        # print(f"{result.shape} = {result._op}({self.shape}")
         return result
 
-    def sum(self, axis=None, keepdims=False) -> "Tensor":
-        result_value = tensor_sum(self.data, axis=axis, keepdims=keepdims)
-        result = Tensor(result_value, requires_grad=self.requires_grad, _op="sum")
+    def sum(self, axis=None, keepdims=False) -> Tensor:
+        kwargs = dict()
+        kwargs["axis"] = axis
+        kwargs["keepdims"] = keepdims
+        rg = self.requires_grad
 
-        if self.requires_grad:
-
-            def _grad_sum(_data: np.ndarray) -> np.ndarray:
-                return grad_sum(_data, self.data, axis, keepdims)
-
-            result.parents.add((self, _grad_sum))
-
-        result._nodes_edges.add(self)
-        # print(f"{result.shape} = {result._op}({self.shape})")
+        result_id = self.graph.add_node(Ops.SUM, (self.node_id,), kwargs=kwargs, rg=rg,)
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
+        )
         return result
 
-
-def get_axes_broadcasting(_data: np.ndarray, arr: np.ndarray) -> list[int]:
-    sum_axes = []
-    for i in range(len(_data.shape)):
-        if i < len(arr.shape):
-            if arr.shape[i] == 1 and _data.shape[i] > 1:
-                sum_axes.append(i)
-        elif i >= len(arr.shape):
-            sum_axes.append(i)
-    return sum_axes
-
-
-def trace_forward(root: Tensor):
-    nodes, edges = set(), set()
-
-    def build(v):
-        if v not in nodes:
-            nodes.add(v)
-            for child in v._nodes_edges:
-                edges.add((child, v))
-                build(child)  # recursive
-
-    build(root)
-    return nodes, edges
-
-
-def get_label(node):
-    if not node.label:
-        if node.requires_grad:
-            return "x"
-        else:
-            if node.dim == 0:
-                return str(node.data)
-            else:
-                return str(node.shape)
-    else:
-        return node.label
-
-
-def get_formula(root: Tensor):
-    visited = set()
-    op_list = []
-
-    def build(v: Tensor):
-        if v not in visited:
-            visited.add(v)
-
-            if v._op:
-                inputs_str = ", ".join(
-                    f"{get_label(child)}" for child in v._nodes_edges
-                )
-                shapes_str = " x ".join(f"{child.shape}" for child in v._nodes_edges)
-                op_list.append(
-                    (f"{get_label(v)} = {v._op}({inputs_str}) \t\t {shapes_str}")
-                )
-
-            for child in v._nodes_edges:
-                build(child)
-
-    build(root)
-
-    return op_list
-
-
-def get_graph(root: Tensor):
-    dot = graphviz.Digraph(graph_attr={"rankdir": "LR"})
-
-    nodes, edges = trace_forward(root)
-    for n in nodes:
-        uid = str(id(n))
-        if n.requires_grad:
-            has_grad = "grad enabled"
-            n_name = n.__class__.__name__
-        else:
-            has_grad = "constant"
-
-            n_name = n.__class__.__name__
-            if n.shape == ():
-                n_name = str(n.data)
-        dot.node(
-            name=uid,
-            label=f"{{ {n_name} | {{ shape {n.shape} | {has_grad} }} }}",
-            shape="record",
+    def exp(self) -> Tensor:
+        rg = self.requires_grad
+        result_id = self.graph.add_node(Ops.EXP, (self.node_id,), rg=rg,)
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
-        if n._op:
-            dot.node(name=uid + n._op, label=n._op)
-            dot.edge(uid + n._op, uid)
+        return result
 
-    for n1, n2 in edges:
-        dot.edge(str(id(n1)), str(id(n2)) + n2._op)
-
-    return dot
-
-
-# --- Gradient Functions (External, NumPy-based) ---
-
-
-def grad_add(_data: np.ndarray, arr1: np.ndarray) -> np.ndarray:
-    sum_axes = get_axes_broadcasting(_data, arr1)
-    return tensor_sum(_data, axis=tuple(sum_axes), keepdims=True)
-
-
-def grad_mul(_data: np.ndarray, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
-    sum_axes = get_axes_broadcasting(_data, arr1)
-    return tensor_sum(tensor_mul(_data, arr2), axis=tuple(sum_axes), keepdims=True)
-
-
-def grad_matmul(
-    _data: np.ndarray,
-    arr1: np.ndarray,
-    arr2: np.ndarray,
-    is_a: bool,
-) -> np.ndarray:
-    if is_a:
-        return tensor_matmul(_data, tensor_transpose(arr2))
-    else:
-        return tensor_matmul(tensor_transpose(arr1), _data)
-
-
-def grad_pow(
-    _data: np.ndarray,
-    arr: np.ndarray,
-    exponent: np.ndarray,
-    is_a: bool,
-) -> np.ndarray:
-    if is_a:
-        local_grad = tensor_mul(exponent, tensor_pow(arr, np.array(exponent - 1)))
-        sum_axes = get_axes_broadcasting(_data, arr)
-        return tensor_sum(
-            tensor_mul(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+    def log(self, base: float | str = "e"):
+        rg = self.requires_grad
+        result_id = self.graph.add_node(
+            op=Ops.LOG, input_ids=(self.node_id,), kwargs={"base": base}, rg=rg,
         )
-    else:
-        local_grad = tensor_mul(tensor_pow(arr, exponent), tensor_log(arr))
-        sum_axes = get_axes_broadcasting(_data, exponent)
-        return tensor_sum(
-            tensor_mul(_data, local_grad), axis=tuple(sum_axes), keepdims=True
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
         )
+        return result
+
+    def reshape(self, shape: int | tuple):
+        rg = self.requires_grad
+        result_id = self.graph.add_node(
+            Ops.RESHAPE,
+            (self.node_id,),
+            kwargs={"shape": shape},
+            rg=rg,
+        )
+        result = Tensor(
+            requires_grad=rg,
+            _node_id=result_id,
+            graph=self.graph,
+        )
+        return result
+
+    def relu(self) -> Tensor:
+        return relu(self)
+
+    def __repr__(self) -> str:
+        return f"{self.node.computed_tensor}, grad={self.grad}, shape={self.node.shape}, rgrad={self.requires_grad}"
+
+    def sqrt(self) -> Tensor:
+        return self**0.5
+
+    def __radd__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other + self
+
+    def __sub__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return self + -(other)
+
+    def __rsub__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other + (-self)
+
+    def __rmul__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other * self
+
+    def __truediv__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return self * (other ** np.array(-1.0))
+
+    def __rtruediv__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other * (self ** np.array(-1.0))
+
+    def __rmatmul__(self, other: TensorLike) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(array=other)
+        return other @ self
+
+    def __neg__(self) -> Tensor:
+        return self * -1.0
 
 
-def grad_sqrt(_data: np.ndarray, arr: np.ndarray) -> np.ndarray:
-    return tensor_mul(_data, (0.5 / tensor_sqrt(arr)))
-
-
-def grad_sum(_data: np.ndarray, arr: np.ndarray, axis, keepdims) -> np.ndarray:
-    if axis is None:
-        return tensor_mul(_data, tensor_ones_like(arr))
-
-    if not keepdims:
-        _data_expanded = tensor_expand_dims(_data, axis=axis)
-        return tensor_mul(_data_expanded, tensor_ones_like(arr))
-    else:
-        return tensor_mul(_data, tensor_ones_like(arr))
-
-
-def grad_transpose(_data: np.ndarray) -> np.ndarray:
-    return _data.T
-
-
-# --- NumPy-based functions ---
-def tensor_sqrt(arr: np.ndarray) -> np.ndarray:
-    return np.sqrt(arr)
-
-
-def tensor_transpose(arr: np.ndarray) -> np.ndarray:
-    return arr.T
-
-
-def tensor_matmul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
-    return np.dot(arr1, arr2)
-
-
-def tensor_add(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
-    return arr1 + arr2
-
-
-def tensor_mul(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
-    return arr1 * arr2
-
-
-def tensor_pow(arr: np.ndarray, exponent: np.ndarray) -> np.ndarray:
-    return np.power(arr, exponent)
-
-
-def tensor_sum(arr: np.ndarray, axis=None, keepdims=False) -> np.ndarray:
-    return np.sum(arr, axis=axis, keepdims=keepdims)
-
-
-def tensor_reshape(arr: np.ndarray, shape) -> np.ndarray:
-    return arr.reshape(shape)
-
-
-def tensor_zeros_like(arr: np.ndarray) -> np.ndarray:
-    return np.zeros_like(arr)
-
-
-def tensor_zeros(shape: tuple) -> np.ndarray:
-    return np.zeros(shape)
-
-
-def tensor_ones_like(arr: np.ndarray) -> np.ndarray:
-    return np.ones_like(arr)
-
-
-def tensor_expand_dims(arr: np.ndarray, axis) -> np.ndarray:
-    return np.expand_dims(arr, axis)
-
-
-def tensor_log(arr: np.ndarray) -> np.ndarray:
-    return np.log(arr)
+def relu(in_tensor: Tensor) -> Tensor:
+    graph = in_tensor.graph
+    rg = in_tensor.requires_grad
+    node_id = graph.add_node(
+        op=Ops.RELU,
+        input_ids=(in_tensor.node_id,),
+        rg=rg,
+    )
+    return Tensor(requires_grad=rg, _node_id=node_id, graph=graph)

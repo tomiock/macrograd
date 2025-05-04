@@ -1,17 +1,23 @@
-from numpy import require
-from macrograd import Tensor
-from macrograd.tensor import get_formula, trace_forward, get_graph
+from macrograd import Tensor, Graph
 
-def my_function_bias(x, w, b):
-    return (x @ w) + b
- 
-def my_function(x, w):
-    return (x @ w)
+from numpy.random import randn
+import numpy as np
 
-x = Tensor([1, 2], requires_grad=False)
-w = Tensor([2, 1], requires_grad=True)
-b = Tensor([3], requires_grad=True)
+from macrograd.engine import topo_sort
 
-z = my_function_bias(x, w, b)
 
-get_formula(z)
+data_array = randn(2, 10)
+weight_array = randn(2, 2)
+bias_array = randn(2,1)
+
+for i in range(10):
+    g = Graph()
+    data = Tensor(data_array.tolist(), graph=g)
+    weight = Tensor(weight_array.tolist(), graph=g, requires_grad=True)
+    bias = Tensor(bias_array.tolist(), graph=g, requires_grad=True)
+
+    x = bias + (weight @ data)
+    g.realize()
+
+    x.backprop()
+    print(g)
