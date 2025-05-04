@@ -5,8 +5,8 @@ As opossed to the great coders of [micrograd](https://github.com/karpathy/microg
 > Just tryping to create an autograd framework, like any great ML engineer should do I guess. My goal would be to keep implementing things as I am learning them in class.
 
 ## Features
-- Eager Execution with Implicit Graph Creation
-- pseudo-pytorch interface for model creation (with a more functional style)
+- Inferred Execution with explicit computational graphs
+- Pseudo-pytorch interface for model creation (with a more functional style)
 - Numpy backend
 - Stochastic Gradient Descent with/without Momentum
 - MNIST with comparable pytorch performance
