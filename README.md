@@ -88,7 +88,8 @@ logits.data
 The graph can be visualized using `graphviz` by calling `Graph.visualized()` on any graph. This would be graph associated with the softmax function used before:
 
 <img src="https://github.com/user-attachments/assets/b331564b-935e-4118-97f9-3d6fdcd13ff9" widht='600' height='600'>
-All necessary information to execute the operations is saved on the graph.
+
+All necessary information to execute the operations is saved on the graph, including the shape and the types of the tensors.
 
 
 ### MNIST
@@ -109,35 +110,56 @@ class MNIST_model(Model):
 
     def __call__(self, data):
         data = self.input_layer(data)
-        data = relu(data)
+        data = data.relu()
 
         data = self.hidden_1(data)
-        data = relu(data)
+        data = data.relu()
 
         data = self.hidden_2(data)
-        data = relu(data)
+        data = data.relu()
 
         data = self.output_layer(data)
         data = softmax(data)
 
         return data
 
-# init the model and create the parameters
+
 model = MNIST_model(784, 10)
-parameters = model.init_params()
 
-epochs = 2
-learning_rate = 0.01 # Stochastic Gradient Descent with Momentum
-optimizer = SGD_MomentumOptimizer(learning_rate, alpha=0.99, params_copy=parameters)
+parameters = model.parameters()
 
-# loop over all minibatches
-for epoch in range(epochs):
-    for X_batch, y_batch in tqdm(train_minibatches, desc=f"Epoch {epoch + 1}/{epochs}"):
-        y_pred = model(X_batch) # forward pass
+epochs = 1
+learning_rate = 0.001
+optimizer = SGD_Momentum(parameters, learning_rate, alpha=0.8)
 
-        # loss calculation
-        loss = cross_entropy(y_batch, y_pred)
+# this decorator needs to be used to set the limits of the computational graph
+# macrograd will construct the graph on the first call, and freeze it.
+# in the following calls no nodes will be added to the graph.
+@compute_graph
+def forward(x_batch, y_batch):
+    y_pred = model(x_batch)
+    loss = cross_entropy(y_batch, y_pred)
 
-        # backward pass and parameter update
-        parameters = optimizer.step(loss, parameters)
+    return loss
+
+# the actual forward pass needs to be defined by this type of decorated function.
+# if not, the graph would keep growing with each forward pass call.
+
+for _ in range(epochs):
+    for x_batch, y_batch in train_minibatches:
+
+        loss = forward(x_batch, y_batch)
+
+        loss.backprop()
+
+        optimizer.step(parameters)
+        print(loss.data)
 ```
+
+This would be the graph for this particular model, batchsize and data:
+![computation_graph gv](https://github.com/user-attachments/assets/a58c6ae5-28e2-4df0-a4e2-e8b5e67bee76)
+
+
+The ${{\color{Blue}\textsf{parameters in blue}}}\$, ${{\color{Red}\textsf{data in red}}}\$ and ${{\color{Green}\textsf{constansts in green}}}\$. The data nodes act like buffers that are filled with the right numbers on each pass. During the first execution the graph is created according the initial data given, thus the batch size and tensor shape given as inputs needs must stay the same.
+
+Note that the red nodes are the inputs given to the `forward` function, the `@compute_graph` decorator is in change of creating this nodes during the first call and of managing the buffers on subsequent calls.
