@@ -14,7 +14,6 @@ class Layer:
 
         self._params: list[Tensor] = []
 
-    @property
     def parameters(self):
         return self._params
 
@@ -116,6 +115,10 @@ class Model:
         for node_id, node in self.graph.nodes.items():
             if node.type == NodeType.PARAM:
                 self._parameters_nodes_ids.append(node_id)
+
+    def zero_params(self):
+        for node in self._parameters_nodes_ids:
+            self.graph.nodes[node].grad = np.zeros_like(self.graph.nodes[node].grad)
 
     def _setter_layers_graph(self):
         raise NotImplementedError

@@ -4,7 +4,7 @@ from macrograd.engine import get_default_graph
 from macrograd import Tensor
 
 
-class train:
+class compute_graph:
     def __init__(self, func_forward):
         self.func_forward = func_forward
 

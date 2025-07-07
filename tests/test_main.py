@@ -1,5 +1,8 @@
 from numpy import allclose, where
+from numpy.random import randn
 import unittest
+import torch
+import numpy
 
 import autograd.numpy as np
 from autograd import grad
@@ -559,6 +562,65 @@ class TestAutogradEquivalence(unittest.TestCase):
             f"ReLU Gradient mismatch:\nFramework:\n{a_var.grad}\nAutograd:\n{grad_a_autograd}",
         )
 
+class TestTorchComparison(unittest.TestCase):
+
+    def test_complex_graph_1(self):
+        g_1 = Graph()
+        a_mg = Tensor(randn(4, 5), requires_grad=True, graph=g_1)
+        b_mg = Tensor(randn(5, 6), requires_grad=True, graph=g_1)
+        c_mg = Tensor(randn(1), requires_grad=True, graph=g_1)
+        d_mg = a_mg @ b_mg
+        e_mg = d_mg.relu()
+        f_mg = e_mg.sum()
+        g_mg = f_mg * c_mg
+        g_mg.realize()
+        g_mg.backprop()
+
+        a_pt = torch.tensor(a_mg.data, requires_grad=True)
+        b_pt = torch.tensor(b_mg.data, requires_grad=True)
+        c_pt = torch.tensor(c_mg.data, requires_grad=True)
+        d_pt = a_pt @ b_pt
+        e_pt = d_pt.relu()
+        f_pt = e_pt.sum()
+        g_pt = f_pt * c_pt
+        g_pt.backward()
+
+        numpy.testing.assert_allclose(a_mg.grad, a_pt.grad.numpy(), atol=1e-6)
+        numpy.testing.assert_allclose(b_mg.grad, b_pt.grad.numpy(), atol=1e-6)
+        numpy.testing.assert_allclose(c_mg.grad, c_pt.grad.numpy(), atol=1e-6)
+
+    def test_complex_graph_2_mlp(self):
+        g_2 = Graph()
+        x_mg = Tensor(randn(1, 784), requires_grad=True, graph=g_2)
+        w1_mg = Tensor(randn(784, 128), requires_grad=True, graph=g_2)
+        b1_mg = Tensor(randn(1, 128), requires_grad=True, graph=g_2)
+        w2_mg = Tensor(randn(128, 10), requires_grad=True, graph=g_2)
+        b2_mg = Tensor(randn(1, 10), requires_grad=True, graph=g_2)
+
+        h1_mg = x_mg @ w1_mg + b1_mg
+        a1_mg = h1_mg.relu()
+        h2_mg = a1_mg @ w2_mg + b2_mg
+        loss_mg = h2_mg.sum()
+        loss_mg.realize()
+        loss_mg.backprop()
+
+        x_pt = torch.tensor(x_mg.data, requires_grad=True)
+        w1_pt = torch.tensor(w1_mg.data, requires_grad=True)
+        b1_pt = torch.tensor(b1_mg.data, requires_grad=True)
+        w2_pt = torch.tensor(w2_mg.data, requires_grad=True)
+        b2_pt = torch.tensor(b2_mg.data, requires_grad=True)
+
+        h1_pt = x_pt @ w1_pt + b1_pt
+        a1_pt = h1_pt.relu()
+        h2_pt = a1_pt @ w2_pt + b2_pt
+        loss_pt = h2_pt.sum()
+        loss_pt.backward()
+
+        numpy.testing.assert_allclose(w1_mg.grad, w1_pt.grad.numpy(), atol=1e-6)
+        numpy.testing.assert_allclose(b1_mg.grad, b1_pt.grad.numpy(), atol=1e-6)
+        numpy.testing.assert_allclose(w2_mg.grad, w2_pt.grad.numpy(), atol=1e-6)
+        numpy.testing.assert_allclose(b2_mg.grad, b2_pt.grad.numpy(), atol=1e-6)
+        loss_mg.graph.clear()
 
 if __name__ == "__main__":
     unittest.main()
