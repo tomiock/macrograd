@@ -311,7 +311,7 @@ def grad_transpose(_data: np.ndarray, axes=None) -> np.ndarray:
 
 
 def grad_relu(_data: np.ndarray, arr: np.ndarray):
-    return _data * arr.data > 0
+    return _data * (arr > 0)
 
 
 def grad_max(
