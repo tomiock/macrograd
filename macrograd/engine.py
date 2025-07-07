@@ -17,6 +17,7 @@ from macrograd.utils_shape import (
     _get_list_shape,
 )
 
+type ArrayLike = int | float | np.ndarray | list
 
 class FastEnum(IntEnum):
     def __str__(self):
@@ -48,6 +49,7 @@ class Ops(FastEnum):
 
     # for constants (data given)
     CONST = auto()
+    DATA = auto()
 
 
 class NodeType(FastEnum):
@@ -94,7 +96,7 @@ def dtype2tensor_type(dtype: np.dtype):
     elif dtype == np.int32:
         return Type.INT32
     else:
-        raise TypeError("Invalid type taken from numpy")
+        raise TypeError(f"Invalid type taken from numpy, got: `{dtype}`")
 
 
 @dataclass
@@ -109,7 +111,7 @@ class Node:
     device: str = "cpu"
     grad: Optional[np.ndarray] = None
     requires_grad: bool = False
-    computed_tensor: Optional[np.ndarray] = None
+    computed_tensor: Optional[ArrayLike] = None
 
     op_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -173,8 +175,11 @@ class Graph:
 
         return new_id
 
+    def clear(self):
+        self._op_counters.clear()
+        self.nodes.clear()
+
     def realize(self) -> None:
-        #self.freeze()
         self.allocate()
         executor_numpy(self)
 
@@ -208,7 +213,12 @@ class Graph:
         if kwargs is None:
             kwargs = defaultdict()
 
-        if op == Ops.CONST:
+        if op == Ops.DATA:
+            if isinstance(static_data, np.ndarray):
+                inf_shape = static_data.shape
+                inf_dtype = dtype2tensor_type(static_data.dtype)
+
+        elif op == Ops.CONST:
             if isinstance(static_data, np.ndarray):
                 inf_shape = static_data.shape
                 inf_dtype = dtype2tensor_type(static_data.dtype)
@@ -527,6 +537,17 @@ class Graph:
             op_name = node.op.name if node.op else "const"
             # Create a multi-line label for the node
 
+            if node.type == NodeType.DATA:
+                label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\n{node.type}\ndtype: {node.dtype}\nrg:{node.requires_grad}"
+
+                color_node = "red"
+            if node.type == NodeType.PARAM:
+                color_node = "blue"
+            if node.type == NodeType.CONST:
+                color_node = "green"
+            if node.type == NodeType.COMPUTED:
+                color_node = "grey"
+
             if node.op_kwargs:
                 label = f"ID: {node.id!r}\nop: {op_name}\nshape: {node.shape}\n{node.type}\ndtype: {node.dtype}\nrg:{node.requires_grad}\nkwargs:\n{node.op_kwargs}"
             else:
@@ -541,7 +562,7 @@ class Graph:
             # Use different shapes for source vs op nodes for clarity (optional)
             shape_style = "ellipse" if node.op else "box"
 
-            dot.node(node_id_str, label=label, shape=shape_style)
+            dot.node(node_id_str, label=label, shape=shape_style, color=color_node)
 
         for node_id, node in self.nodes.items():
             child_id_str = str(node_id)

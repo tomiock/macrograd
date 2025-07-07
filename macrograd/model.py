@@ -1,8 +1,9 @@
 from typing import Hashable, Optional, Any, Iterable
 from warnings import warn
-import numpy as np
 from macrograd.engine import Graph, NodeType, get_default_graph
 from macrograd.tensor import Tensor
+
+import numpy as np
 
 
 class Layer:
@@ -61,16 +62,18 @@ class Model:
         self._output_node_id: Hashable
         self._parameters_nodes_ids: list[Hashable] = []
 
-    def __call__(self, *args):
+    def __call__(self, *args, **kwargs):
         if not self._is_allocated:
-            return self._build_and_execute_graph(args)
+            return self._build_and_execute_graph(*args, **kwargs)
         else:
-            return self._execute_graph(args)
+            return self._execute_graph(*args, **kwargs)
 
     def _build_and_execute_graph(self, input_data: Iterable):
         input_tensors = []
-        for i, data_item in enumerate(input_data):
+
+        for data_item in input_data:
             if isinstance(data_item, Tensor):
+                # here we are using already created data tensors
                 input_tensors.append(data_item)
             else:
                 t = Tensor(data_item, node_type="data")
@@ -88,7 +91,7 @@ class Model:
 
         return output_tensor
 
-    def forward(self, *args) -> Tensor:
+    def forward(self) -> Tensor:
         raise NotImplementedError("This should be defined by the user")
 
     def _execute_graph(self, data: Any):
@@ -97,6 +100,7 @@ class Model:
 
         input_data_dict = {}
         for i, node_id in enumerate(self._input_nodes_ids):
+            print(node_id)
             data_item = data[i]
 
             if isinstance(data_item, Tensor):
@@ -116,75 +120,8 @@ class Model:
     def _setter_layers_graph(self):
         raise NotImplementedError
 
-    @property
     def parameters(self) -> list[Tensor]:
         if not self._parameters_nodes_ids:
             self._collect_parameters_nodes()
 
         return [Tensor(_node_id=id) for id in self._parameters_nodes_ids]
-
-
-class SGD_Optimizer:
-    def __init__(
-        self, learning_rate: float = 0.01, minimizing=True, step_function=None
-    ):
-        self.lr = learning_rate
-        self.min = minimizing
-        self.step_fn = step_function
-
-        if not self.step_fn:
-            if self.min:
-
-                def step_fn(param):
-                    param.data -= param.grad * self.lr
-                    return param
-            else:
-
-                def step_fn(param):
-                    param.data += param.grad * self.lr
-                    return param
-
-            self.step_fn = step_fn
-
-    def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-        loss.backprop()
-
-        return list(map(self.step_fn, params))
-
-
-class SGD_MomentumOptimizer:
-    def __init__(
-        self, learning_rate: float = 0.01, alpha: float = 0.9, params_copy: list = []
-    ):
-        self.lr = learning_rate
-        self.velocities = []
-
-        if 0 <= alpha < 1:
-            self.alpha = Tensor(alpha, requires_grad=False)
-        else:
-            raise ValueError("Alpha hyperparemter must be between 0 and 1")
-
-        for param in params_copy:
-            self.velocities.append(
-                Tensor(
-                    np.zeros_like(param.data),
-                    requires_grad=False,
-                )
-            )
-
-        del params_copy
-
-    def step_fn(self, param: Tensor, index: int):
-        self.velocities[index].data = (
-            self.alpha.data * self.velocities[index].data - self.lr * param.grad
-        )
-        param.data = param.data + self.velocities[index].data
-        return param
-
-    def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-        loss.backprop()
-
-        updated_params = []
-        for index, param in enumerate(params):
-            updated_params.append(self.step_fn(param, index))
-        return updated_params
