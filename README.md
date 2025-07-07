@@ -2,14 +2,14 @@
 
 As opossed to the great coders of [micrograd](https://github.com/karpathy/micrograd) or [tinygrad](https://github.com/tinygrad/tinygrad), since I am not as good as them, this framework shall be named **Macrograd**!
 
-> Just tryping to create an autograd framework, like any great ML engineer should do I guess. My goal would be to keep implementing things as I am learning them in class.
+> Just tryping to create an autograd framework, like any great DL engineer should do I guess. My goal would be to keep implementing things that same useful to learn and to experiment with.
 
 ## Features
 - Inferred Execution with explicit computational graphs
 - Pseudo-pytorch interface for model creation (with a more functional style)
 - Numpy backend
 - Stochastic Gradient Descent with/without Momentum
-- MNIST with comparable pytorch performance
+- MNIST with comparable pytorch performance (model performance)
 
 ## Example
 
@@ -21,9 +21,14 @@ A default graph is created if none is specified when calling `Tensor`. No need t
 ```python
 from macrograd import Tensor
 
+# functions can be designed with the same notation that `numpy` uses:
 def softmax(x: Tensor) -> Tensor:
     e_x = x.exp()
     return e_x / (e_x.sum(axis=1, keepdims=True))
+
+def cross_entropy(y_true, y_pred) -> Tensor:
+    return -1 * (y_true * (y_pred).log()).sum() / y_true.data.shape[0]
+
 
 my_tensor = Tensor(
     [[1, 2, 3, 4],
@@ -31,7 +36,7 @@ my_tensor = Tensor(
 
 logits = softmax(my_tensor)
 logits.realize() # execture the graph
-# would be the same as `logits.graph.realize()`
+# would be the same as `logits.graph.realize()
 
 # access the computed tensor
 logits.data
@@ -156,7 +161,7 @@ for _ in range(epochs):
         print(loss.data)
 ```
 
-This would be the graph for this particular model, batchsize and data:
+This would be the graph for this particular model, batch_size and data:
 ![computation_graph gv](https://github.com/user-attachments/assets/a58c6ae5-28e2-4df0-a4e2-e8b5e67bee76)
 
 
