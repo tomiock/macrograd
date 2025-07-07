@@ -165,6 +165,6 @@ This would be the graph for this particular model, batch_size and data:
 ![computation_graph gv](https://github.com/user-attachments/assets/a58c6ae5-28e2-4df0-a4e2-e8b5e67bee76)
 
 
-The ${{\color{Blue}\textsf{parameters in blue}}}\$, ${{\color{Red}\textsf{data in red}}}\$ and ${{\color{Green}\textsf{constansts in green}}}\$. The data nodes act like buffers that are filled with the right numbers on each pass. During the first execution the graph is created according the initial data given, thus the batch size and tensor shape given as inputs needs must stay the same.
+The ${{\color{Blue}\textsf{parameters in blue}}}\$, ${{\color{Red}\textsf{data in red}}}\$ and ${{\color{Green}\textsf{constansts in green}}}\$. The data nodes act like buffers, on each call they are filled with the input arrays that are provided to the `forward` function. During the first execution the graph is created according the initial data given, thus the batch size and tensor shape given as inputs needs must stay the same.
 
 Note that the red nodes are the inputs given to the `forward` function, the `@compute_graph` decorator is in change of creating this nodes during the first call and of managing the buffers on subsequent calls.
