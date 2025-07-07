@@ -1,7 +1,8 @@
-import numpy as np
 import warnings
 
 from . import Tensor
+
+import numpy as np
 
 
 class LinearScheduler:
@@ -118,7 +119,7 @@ class SGD:
 class SGD_Momentum:
     def __init__(
         self,
-        params_copy: list,
+        params_copy: list[Tensor],
         learning_rate: float = 0.01,
         alpha: float = 0.9,
     ):
@@ -132,24 +133,19 @@ class SGD_Momentum:
 
         for param in params_copy:
             self.velocities.append(
-                Tensor(
-                    np.zeros_like(param.data), requires_grad=False, precision=np.float32
-                )
+                    np.zeros_like(param.data)
             )
 
         del params_copy
 
     def step_fn(self, param: Tensor, index: int):
-        self.velocities[index].data = (
-            self.alpha.data * self.velocities[index].data - self.lr * param.grad
+        self.velocities[index] = (
+            self.alpha.data * self.velocities[index] - self.lr * param.grad
         )
-        param.data = param.data + self.velocities[index].data
+        param.data = param.data + self.velocities[index]
         return param
 
-    def step(self, loss: Tensor, params: list[Tensor]) -> list[Tensor]:
-
-        loss.backprop()
-
+    def step(self, params: list[Tensor]) -> list[Tensor]:
         updated_params = []
         for index, param in enumerate(params):
             updated_params.append(self.step_fn(param, index))

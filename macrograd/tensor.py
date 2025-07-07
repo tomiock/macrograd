@@ -71,16 +71,24 @@ class Tensor:
         self._data = self.node.computed_tensor
         return self._data
 
+    @data.setter
+    def data(self, tensor: TensorLike):
+        if isinstance(tensor, Tensor):
+            self.node.computed_tensor = tensor.data
+        else:
+            self.node.computed_tensor = tensor
+
     @property
     def shape(self) -> tuple[int, ...]:
         return self.node.shape
 
     def realize(self):
         if self.node.op == Ops.CONST:
-            return self.data
+            return self._data
         else:
             executor_numpy(self.graph)
             self._data = self.node.computed_tensor
+            return self._data
 
     def backprop(self):
         _backward(self.graph, self.node_id)

@@ -1,8 +1,9 @@
 import math
+from typing import Hashable, Optional, Sequence
 from warnings import warn
+
 import numpy as np
 
-from typing import Hashable, Sequence, Optional
 from .engine import Graph, Ops, topo_sort
 from .utils_shape import _normalize_axis
 
@@ -218,6 +219,10 @@ def _backward(graph: Graph, node_id: Hashable):
 
 
 def unbroadcast(grad, target_shape, broadcast_idx=0) -> np.ndarray:
+    """
+    from autograd
+    https://github.com/HIPS/autograd/blob/45fe54077e975e45af1fe49e545cc9a4b3aeb9ec/autograd/numpy/numpy_vjps.py#L879
+    """
     target_ndim = len(target_shape)
 
     while grad.ndim > target_ndim:
