@@ -98,7 +98,7 @@ All necessary information to execute the operations is saved on the graph, inclu
 
 
 ### MNIST
-Multiclass MNIST Classification with 97% accuracy on test set with 2 or 1 epochs (60k train images)
+Multiclass MNIST Classification
 ```python
 # data set is loaded from torchvision and minibatches are created
 # see `example/mnist.py` for the rest of the code
